@@ -42,7 +42,16 @@ import java.util.List;
  * The branch set is not artificially capped: masks are longs, the visited
  * set switches from a bitset to a hash set past 2^20 masks, and above 62
  * branch items (far beyond any real or test input) the greedy result is
- * returned rather than crashing.
+ * returned rather than crashing. Stat-identical items are explored in a
+ * canonical order (duplicates collapse to one subtree per multiplicity), a
+ * permanently-blocked-item bound prunes hopeless subtrees, and a node budget
+ * caps worst-case latency and memory on adversarial inputs - if the budget
+ * is ever exhausted (requires tens of pathological branch items, far outside
+ * game data), the best feasible set found so far is returned.
+ *
+ * Supported numeric domain: per-lane requirements/bonuses and allocated SP
+ * with magnitudes up to ~2^20 and item counts up to ~2^10. Real game data
+ * stays below ~200; outside the stated domain int arithmetic could wrap.
  */
 @Information(name = "Closure Lattice", version = 1, authors = {"claude"})
 public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
@@ -53,6 +62,14 @@ public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
     private static final int VISITED_BITSET_LIMIT = 20;
     /** Largest branch count solved exactly at all (long masks). */
     private static final int EXACT_LIMIT = 62;
+    /**
+     * Hard cap on DFS nodes per call. Real builds need well under a hundred
+     * nodes; every repo test needs at most a few hundred. The cap only binds
+     * on adversarial inputs with dozens of interacting negative items, where
+     * it bounds latency and visited-set memory while still returning the best
+     * feasible set found.
+     */
+    private static final int NODE_BUDGET = 1 << 16;
 
     // Per-item snapshot, flat [item * 5 + skill].
     private int[] req = new int[0];
@@ -73,6 +90,9 @@ public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
     private int[] closureOrder = new int[0];
     private int[] statsStack = new int[0];   // (depth) * 5
     private int[] needStack = new int[0];
+    private int[] remPosStack = new int[0];  // per-depth: sum of positive bonuses of unequipped items, per lane
+    private int[] posScoreStack = new int[0]; // per-depth: sum of positive item scores of unequipped items
+    private long[] dupPred = new long[0];    // per branch position: earlier positions with identical stats
     private long[] visited = new long[0];
     private HashSet<Long> visitedLarge;
 
@@ -87,6 +107,7 @@ public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
     private int bestWeight;
     private long bestMask;
     private boolean solved;
+    private int nodesLeft;
 
     @Override
     public Result run(WynnPlayer player) {
@@ -138,6 +159,9 @@ public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
         closureOrder = new int[cap];
         statsStack = new int[(cap + 2) * S];
         needStack = new int[(cap + 2) * S];
+        remPosStack = new int[(cap + 2) * S];
+        posScoreStack = new int[cap + 2];
+        dupPred = new long[cap];
     }
 
     private void snapshot(List<IEquipment> equipment) {
@@ -207,6 +231,46 @@ public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
         }
         insertionSort(forcedIdx, forcedKeys, forcedCount);
         insertionSort(branchIdx, branchKeys, branchCount);
+
+        // Canonical ordering for stat-identical branch items: position p may only
+        // be equipped once every identical earlier position is equipped. Identical
+        // items are interchangeable, so this collapses symmetric subtrees without
+        // losing any (count, weight) outcome.
+        for (int p = 0; p < branchCount && p < 64; p++) {
+            long mask = 0L;
+            int pi = branchIdx[p] * S;
+            for (int q = 0; q < p; q++) {
+                int qi = branchIdx[q] * S;
+                boolean same = true;
+                for (int s = 0; s < S && same; s++) {
+                    same = req[pi + s] == req[qi + s] && bon[pi + s] == bon[qi + s];
+                }
+                if (same) {
+                    mask |= 1L << q;
+                }
+            }
+            dupPred[p] = mask;
+        }
+    }
+
+    /** Resets the per-depth "still unequipped" positive-bonus aggregates at depth 0. */
+    private void initRemaining() {
+        for (int s = 0; s < S; s++) {
+            remPosStack[s] = 0;
+        }
+        int posScore = 0;
+        for (int i = 0, off = 0; i < n; i++, off += S) {
+            for (int s = 0; s < S; s++) {
+                int b = bon[off + s];
+                if (b > 0) {
+                    remPosStack[s] += b;
+                }
+            }
+            if (score[i] > 0) {
+                posScore += score[i];
+            }
+        }
+        posScoreStack[0] = posScore;
     }
 
     private static int clampKey(int value) {
@@ -237,6 +301,7 @@ public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
     private void solve() {
         // --- Phase B: greedy constructive attempt at depth 0. ---
         Arrays.fill(equippedItem, 0, n, false);
+        initRemaining();
         for (int s = 0; s < S; s++) {
             statsStack[s] = base[s];
             needStack[s] = Integer.MIN_VALUE;
@@ -261,7 +326,9 @@ public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
                 }
                 applyBranchInPlace(0, ioff);
                 equippedItem[i] = true;
-                greedyMask |= 1L << p;
+                if (p < 64) {
+                    greedyMask |= 1L << p;
+                }
                 greedyCount++;
                 greedyCount += runClosure(0);
                 progress = true;
@@ -279,20 +346,24 @@ public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
             return;
         }
 
+        if (branchCount > EXACT_LIMIT) {
+            // Beyond exact reach at any conceivable budget; return the greedy
+            // result straight from the equip flags (mask arithmetic is unsafe
+            // past 64 branch positions and is not used on this path).
+            System.arraycopy(equippedItem, 0, valid, 0, n);
+            return;
+        }
+
         bestCount = greedyCount;
         bestWeight = pathWeight(greedyMask);
         bestMask = greedyMask;
         solved = false;
-
-        if (branchCount > EXACT_LIMIT) {
-            // Unsolvable exactly at any conceivable budget; keep the greedy answer.
-            reconstruct(bestMask);
-            return;
-        }
+        nodesLeft = NODE_BUDGET;
 
         // --- Phase C: exact DFS over branch masks. ---
         prepareVisited();
         Arrays.fill(equippedItem, 0, n, false);
+        initRemaining();
         for (int s = 0; s < S; s++) {
             statsStack[s] = base[s];
             needStack[s] = Integer.MIN_VALUE;
@@ -301,6 +372,7 @@ public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
         int rootCount = zeroCount + runClosure(0);
         int rootWeight = closureScoreFrom(0);
         dfs(0L, 0, rootCount, rootWeight);
+        visitedLarge = null;
 
         reconstruct(bestMask);
     }
@@ -379,11 +451,19 @@ public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
     private void applyBranchInPlace(int depth, int ioff) {
         int off = depth * S;
         for (int s = 0; s < S; s++) {
-            statsStack[off + s] += bon[ioff + s];
+            int b = bon[ioff + s];
+            statsStack[off + s] += b;
+            if (b > 0) {
+                remPosStack[off + s] -= b;
+            }
             int itemNeed = rpb[ioff + s];
             if (itemNeed > needStack[off + s]) {
                 needStack[off + s] = itemNeed;
             }
+        }
+        int itemScore = score[ioff / S];
+        if (itemScore > 0) {
+            posScoreStack[depth] -= itemScore;
         }
     }
 
@@ -391,11 +471,15 @@ public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
         int off = depth * S;
         int noff = off + S;
         for (int s = 0; s < S; s++) {
-            statsStack[noff + s] = statsStack[off + s] + bon[ioff + s];
+            int b = bon[ioff + s];
+            statsStack[noff + s] = statsStack[off + s] + b;
+            remPosStack[noff + s] = remPosStack[off + s] - (b > 0 ? b : 0);
             int need = needStack[off + s];
             int itemNeed = rpb[ioff + s];
             needStack[noff + s] = itemNeed > need ? itemNeed : need;
         }
+        int itemScore = score[ioff / S];
+        posScoreStack[depth + 1] = posScoreStack[depth] - (itemScore > 0 ? itemScore : 0);
     }
 
     /**
@@ -424,11 +508,16 @@ public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
                     || (req[ioff + 4] > 0 && statsStack[off + 4] < req[ioff + 4])) {
                     continue;
                 }
-                statsStack[off] += bon[ioff];
-                statsStack[off + 1] += bon[ioff + 1];
-                statsStack[off + 2] += bon[ioff + 2];
-                statsStack[off + 3] += bon[ioff + 3];
-                statsStack[off + 4] += bon[ioff + 4];
+                for (int s = 0; s < S; s++) {
+                    int b = bon[ioff + s];
+                    statsStack[off + s] += b;
+                    if (b > 0) {
+                        remPosStack[off + s] -= b;
+                    }
+                }
+                if (score[i] > 0) {
+                    posScoreStack[depth] -= score[i];
+                }
                 equippedItem[i] = true;
                 closureOrder[closureSize++] = i;
                 added++;
@@ -448,14 +537,39 @@ public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
                 return;
             }
         }
-        int remaining = (branchCount - Long.bitCount(mask)) + (forcedCount - closureSize);
-        if (count + remaining < bestCount) {
+        if (--nodesLeft < 0) {
+            return;
+        }
+
+        // Admissible bound: an unequipped item can only ever be added if each
+        // required lane can still reach its requirement using every positive
+        // bonus left in the pool. Items that cannot are excluded from the
+        // achievable count; remaining weight is bounded by the positive scores
+        // left. Prune when neither the count nor the weight tiebreak can beat
+        // the incumbent.
+        int countBound = count;
+        for (int p = 0; p < branchCount; p++) {
+            if ((mask & (1L << p)) != 0) {
+                continue;
+            }
+            if (everAddable(depth, branchIdx[p] * S)) {
+                countBound++;
+            }
+        }
+        for (int p = 0; p < forcedCount; p++) {
+            int i = forcedIdx[p];
+            if (!equippedItem[i] && everAddable(depth, i * S)) {
+                countBound++;
+            }
+        }
+        if (countBound < bestCount
+            || (countBound == bestCount && weight + posScoreStack[depth] <= bestWeight)) {
             return;
         }
 
         for (int p = 0; p < branchCount; p++) {
             long bit = 1L << p;
-            if ((mask & bit) != 0) {
+            if ((mask & bit) != 0 || (mask & dupPred[p]) != dupPred[p]) {
                 continue;
             }
             int i = branchIdx[p];
@@ -480,6 +594,18 @@ public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
             }
             closureSize = savedClosure;
         }
+    }
+
+    /** Can this item's requirements still be met in ANY extension from this node? */
+    private boolean everAddable(int depth, int ioff) {
+        int off = depth * S;
+        for (int s = 0; s < S; s++) {
+            int r = req[ioff + s];
+            if (r > 0 && statsStack[off + s] + remPosStack[off + s] < r) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

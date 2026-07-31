@@ -21,8 +21,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Differential fuzzing for the Closure Lattice algorithm. Not part of the
- * default tagged suites; run with: ./gradlew test -Pcases=fuzz
+ * Differential fuzzing for the Closure Lattice algorithm. Runs in the default
+ * suite (fixed seeds, deterministic, a few seconds); isolate it with:
+ * ./gradlew test -Pcases=fuzz
  *
  * Three layers of evidence:
  * 1. A permutation oracle implementing the spec literally (search over equip
@@ -365,6 +366,51 @@ class DifferentialFuzzTest {
                         + " theirs count=" + theirs[0] + " weight=" + theirs[1] + "\n" + describe(inst));
                 }
             }
+        }
+    }
+
+    @Test
+    void hugeBranchCountsReturnFeasibleSetsQuickly() {
+        // Adversarial regimes far outside game data: an impossible item plus many
+        // no-requirement drain items. Exercises the >62-branch greedy fallback
+        // (which must not corrupt results via mask arithmetic), the duplicate
+        // canonicalization, and the node budget. The returned set must always be
+        // feasible and, for these shapes, exactly optimal: every drain is
+        // equippable (count = n - 1) and the blocked item is not.
+        AlgorithmRegistry.Entry lattice = entry("Closure Lattice V1");
+        int[][] sizes = {{24}, {64}, {65}, {80}};
+        for (int[] sz : sizes) {
+            int drains = sz[0];
+            int n = drains + 1;
+            Instance inst = new Instance();
+            inst.req = new int[n][S];
+            inst.bon = new int[n][S];
+            inst.score = new int[n];
+            inst.base = new int[] {100, 0, 0, 0, 0};
+            inst.items = new IEquipment[n];
+            inst.req[0] = new int[] {1000, 0, 0, 0, 0};
+            inst.bon[0] = new int[S];
+            inst.items[0] = SyntheticEquipment.of(inst.req[0], inst.bon[0]);
+            for (int i = 1; i < n; i++) {
+                inst.req[i] = new int[S];
+                // Heterogeneous drains (distinct lanes) so subsets do not collapse
+                // by duplicate canonicalization alone.
+                int[] b = new int[S];
+                b[1 + (i % 4)] = -1;
+                b[0] = (i % 3 == 0) ? -1 : 0;
+                inst.bon[i] = b;
+                int sc = 0;
+                for (int s = 0; s < S; s++) {
+                    sc += b[s];
+                }
+                inst.score[i] = sc;
+                inst.items[i] = SyntheticEquipment.of(inst.req[i], inst.bon[i]);
+            }
+            long start = System.nanoTime();
+            int[] actual = runAlgorithm(lattice, inst, true);
+            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            assertEquals(drains, actual[0], "all drains must be valid for " + drains + " drains");
+            assertTrue(elapsedMs < 5_000, "bounded latency, took " + elapsedMs + "ms for " + drains + " drains");
         }
     }
 

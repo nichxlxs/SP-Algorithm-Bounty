@@ -3,6 +3,7 @@ package com.wynncraft;
 
 import com.wynncraft.algorithms.NegativeOrderAlgorithm;
 import com.wynncraft.algorithms.CapyTopoAlgorithm;
+import com.wynncraft.algorithms.ClosureLatticeAlgorithm;
 import com.wynncraft.algorithms.CascadeBoundChecker;
 import com.wynncraft.algorithms.GreedyAlgorithm;
 import com.wynncraft.algorithms.MyFirstAlgorithm;
@@ -56,6 +57,7 @@ public class AlgorithmRegistry {
         register(new PrunedMaskAlgorithm(), WynnPlayer.Builder::new);
         register(new PrunedMaskV2Algorithm(), WynnPlayer.Builder::new);
         register(new StarvingGoblinAlgorithm(), StarvingPlayer.Builder::new);
+        register(new ClosureLatticeAlgorithm(), WynnPlayer.Builder::new);
     }
 
     /**

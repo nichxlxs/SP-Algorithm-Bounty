@@ -74,8 +74,12 @@ public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
     // Per-item snapshot, flat [item * 5 + skill].
     private int[] req = new int[0];
     private int[] bon = new int[0];
-    private int[] rpb = new int[0];      // req + bonus where req > 0, else MIN_VALUE
+    private int[] rpb = new int[0];      // req + bonus where req > 0, else MIN_VALUE (branch items only)
     private int[] score = new int[0];    // sum of the item's 5 bonuses
+    private int[] meta = new int[0];     // bits 0-4 req lanes, 5-9 negative lanes, 10 has-positive
+    private int[] reqSums = new int[0];
+    private int[] rpbSums = new int[0];
+    private final int[] bonusTotal = new int[S];
     private boolean[] valid = new boolean[0];
 
     // Classification (item indices) + sort keys.
@@ -128,14 +132,22 @@ public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
         snapshot(equipment);
         solve();
 
-        for (int i = 0; i < count; i++) {
+        for (int s = 0; s < S; s++) {
+            bonusTotal[s] = 0;
+        }
+        for (int i = 0, off = 0; i < count; i++, off += S) {
             IEquipment item = equipment.get(i);
             if (valid[i]) {
                 validList.add(item);
-                player.modify(item.bonuses(), true);
+                for (int s = 0; s < S; s++) {
+                    bonusTotal[s] += bon[off + s];
+                }
             } else {
                 invalidList.add(item);
             }
+        }
+        if (!validList.isEmpty()) {
+            player.modify(bonusTotal, true);
         }
         return new Result(validList, invalidList);
     }
@@ -149,6 +161,9 @@ public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
         bon = new int[cap * S];
         rpb = new int[cap * S];
         score = new int[cap];
+        meta = new int[cap];
+        reqSums = new int[cap];
+        rpbSums = new int[cap];
         valid = new boolean[cap];
         zeroIdx = new int[cap];
         forcedIdx = new int[cap];
@@ -171,62 +186,62 @@ public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
             int[] itemReq = item.requirements();
             int[] itemBon = item.bonuses();
             int itemScore = 0;
+            int reqLanes = 0;
+            int negLanes = 0;
+            boolean hasPos = false;
+            int reqSum = 0;
+            int rpbSum = 0;
             for (int s = 0; s < S; s++) {
                 int r = itemReq[s];
                 int b = itemBon[s];
                 req[off + s] = r;
                 bon[off + s] = b;
-                rpb[off + s] = r > 0 ? r + b : Integer.MIN_VALUE;
                 itemScore += b;
+                if (r > 0) {
+                    reqLanes |= 1 << s;
+                    reqSum += r;
+                    rpbSum += r + b;
+                }
                 if (b < 0) {
-                    riskyMask |= 1 << s;
+                    negLanes |= 1 << s;
+                } else if (b > 0) {
+                    hasPos = true;
                 }
             }
             score[i] = itemScore;
+            meta[i] = reqLanes | (negLanes << 5) | (hasPos ? 1 << 10 : 0);
+            reqSums[i] = reqSum;
+            rpbSums[i] = rpbSum;
+            riskyMask |= negLanes;
         }
 
         zeroCount = 0;
         forcedCount = 0;
         branchCount = 0;
-        for (int i = 0, off = 0; i < n; i++, off += S) {
-            boolean hasReq = false;
-            boolean hasNeg = false;
-            boolean hasPos = false;
-            boolean reqOnRisky = false;
-            int reqSum = 0;
-            int rpbSum = 0;
-            for (int s = 0; s < S; s++) {
-                int r = req[off + s];
-                int b = bon[off + s];
-                if (r > 0) {
-                    hasReq = true;
-                    reqSum += r;
-                    rpbSum += r + b;
-                    if ((riskyMask & (1 << s)) != 0) {
-                        reqOnRisky = true;
-                    }
-                }
-                if (b < 0) {
-                    hasNeg = true;
-                } else if (b > 0) {
-                    hasPos = true;
-                }
-            }
-            if (!hasReq && !hasNeg && !hasPos) {
+        for (int i = 0; i < n; i++) {
+            int m = meta[i];
+            int reqLanes = m & 31;
+            int negLanes = (m >>> 5) & 31;
+            if (m == 0) {
                 zeroIdx[zeroCount++] = i;
-            } else if (!hasNeg && !reqOnRisky) {
+            } else if (negLanes == 0 && (reqLanes & riskyMask) == 0) {
                 forcedIdx[forcedCount] = i;
-                forcedKeys[forcedCount] = clampKey(reqSum);
+                forcedKeys[forcedCount] = clampKey(reqSums[i]);
                 forcedCount++;
             } else {
                 branchIdx[branchCount] = i;
                 // Positive branch items first (requirement sum ascending), then
                 // negative items by req+bonus sum descending - the exchange-argument
                 // order that succeeds on almost every feasible build.
-                branchKeys[branchCount] = hasNeg
-                    ? (1 << 30) - clampKey(rpbSum)
-                    : clampKey(reqSum);
+                branchKeys[branchCount] = negLanes != 0
+                    ? (1 << 30) - clampKey(rpbSums[i])
+                    : clampKey(reqSums[i]);
                 branchCount++;
+                // rpb is only ever read for branch items; fill it lazily here.
+                int off = i * S;
+                for (int s = 0; s < S; s++) {
+                    rpb[off + s] = req[off + s] > 0 ? req[off + s] + bon[off + s] : Integer.MIN_VALUE;
+                }
             }
         }
         insertionSort(forcedIdx, forcedKeys, forcedCount);
@@ -300,8 +315,9 @@ public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
 
     private void solve() {
         // --- Phase B: greedy constructive attempt at depth 0. ---
+        // Note: remPosStack/posScoreStack are blindly decremented on this path
+        // but never read; initRemaining() re-seeds them before the DFS reads.
         Arrays.fill(equippedItem, 0, n, false);
-        initRemaining();
         for (int s = 0; s < S; s++) {
             statsStack[s] = base[s];
             needStack[s] = Integer.MIN_VALUE;

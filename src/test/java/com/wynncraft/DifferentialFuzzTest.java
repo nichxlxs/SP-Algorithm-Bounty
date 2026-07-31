@@ -215,6 +215,8 @@ class DifferentialFuzzTest {
 
     // -------------------------------------------------------------- execution
 
+    private static final String[] LATTICE_NAMES = {"Closure Lattice V1", "Closure Lattice V2"};
+
     private static AlgorithmRegistry.Entry entry(String name) {
         return AlgorithmRegistry.registry().stream()
             .filter(e -> e.name().equals(name))
@@ -222,9 +224,26 @@ class DifferentialFuzzTest {
             .orElseThrow(() -> new IllegalStateException("Missing algorithm: " + name));
     }
 
-    /** Runs an algorithm on the instance; returns {count, weight} and validates the result shape. */
-    @SuppressWarnings("unchecked")
+    /**
+     * Runs an algorithm on the instance; returns {count, weight} and validates
+     * the result shape. When the entry is Closure Lattice V1, the SWAR V2 is
+     * run on the same instance as well and must produce an identical
+     * (count, weight) - so every oracle check transitively covers both.
+     */
     private static int[] runAlgorithm(AlgorithmRegistry.Entry entry, Instance inst, boolean validateShape) {
+        int[] result = runAlgorithmOnce(entry, inst, validateShape);
+        if (entry.name().equals(LATTICE_NAMES[0])) {
+            int[] v2 = runAlgorithmOnce(entry(LATTICE_NAMES[1]), inst, validateShape);
+            if (result[0] != v2[0] || result[1] != v2[1]) {
+                fail("V1/V2 divergence: v1 count=" + result[0] + " weight=" + result[1]
+                    + " v2 count=" + v2[0] + " weight=" + v2[1] + "\n" + describe(inst));
+            }
+        }
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static int[] runAlgorithmOnce(AlgorithmRegistry.Entry entry, Instance inst, boolean validateShape) {
         IPlayerBuilder<?> builder = entry.builder();
         builder.equipment(inst.items);
         for (int s = 0; s < S; s++) {

@@ -55,6 +55,11 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
     private boolean[] negFlag = new boolean[0];
     private int[] wlIdx = new int[0];
     private int[][] wlReq = new int[0][];
+    private int[][] fReq = new int[0][];
+    private int[][] fBon = new int[0][];
+    private int[][] pReq = new int[0][];
+    private int[][] pBon = new int[0][];
+    private final int[] extBase = new int[S];
     private final int[] base = new int[S];
     private final int[] bonusTotal = new int[S];
 
@@ -289,36 +294,25 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             }
             boolean neg = negFlag[i];
             int sc = b[0] + b[1] + b[2] + b[3] + b[4];
-            long reqPk = (long) (r0 == 0 ? 0 : r0 + 1024)
-                | ((long) (r1 == 0 ? 0 : r1 + 1024)) << 12
-                | ((long) (r2 == 0 ? 0 : r2 + 1024)) << 24
-                | ((long) (r3 == 0 ? 0 : r3 + 1024)) << 36
-                | ((long) (r4 == 0 ? 0 : r4 + 1024)) << 48;
-            long bonPk = pack(b[0], b[1], b[2], b[3], b[4]);
             if (!neg && (reqLanes & riskyMask) == 0) {
                 int f = forcedCount++;
                 forcedItem[f] = i;
-                fReqPk[f] = reqPk;
-                fBonPk[f] = bonPk;
+                fReq[f] = r;
+                fBon[f] = b;
                 fScore[f] = sc;
                 fKeys[f] = r0 + r1 + r2 + r3 + r4;
             } else {
                 int p = branchCount++;
                 branchItem[p] = i;
-                bReqPk[p] = reqPk;
-                bBonPk[p] = bonPk;
+                pReq[p] = r;
+                pBon[p] = b;
                 bScore[p] = sc;
-                long rpb = 0L;
                 int rpbSum = 0;
                 for (int s = 0; s < S; s++) {
-                    int rv = s == 0 ? r0 : s == 1 ? r1 : s == 2 ? r2 : s == 3 ? r3 : r4;
-                    if (rv > 0) {
-                        int v = rv + b[s];
-                        rpb |= ((long) (v + 1024)) << (12 * s);
-                        rpbSum += v;
+                    if (r[s] > 0) {
+                        rpbSum += r[s] + b[s];
                     }
                 }
-                bRpbPk[p] = rpb;
                 bKeys[p] = neg ? (1 << 30) - rpbSum : r0 + r1 + r2 + r3 + r4;
             }
         }
@@ -333,6 +327,11 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
         }
 
         extractedStatsPk = pack(ext0, ext1, ext2, ext3, ext4);
+        extBase[0] = ext0;
+        extBase[1] = ext1;
+        extBase[2] = ext2;
+        extBase[3] = ext3;
+        extBase[4] = ext4;
         solve();
         return buildResult(equipment, count, player);
     }
@@ -385,6 +384,10 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
         negFlag = new boolean[cap];
         wlIdx = new int[cap];
         wlReq = new int[cap][];
+        fReq = new int[cap][];
+        fBon = new int[cap][];
+        pReq = new int[cap][];
+        pBon = new int[cap][];
         equippedForced = new boolean[cap];
         closureLog = new int[cap];
         statsPkStack = new long[cap + 2];
@@ -406,35 +409,107 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             sortBranch();
         }
 
-        // Greedy constructive attempt.
+        // Greedy constructive attempt - scalar over the survivor refs, all
+        // state in locals; nothing is packed unless the DFS is needed.
         resetPending();
-        statsPkStack[0] = extractedStatsPk;
-        needPkStack[0] = 0L;
         closureSize = 0;
-        int count = extractedCount + runClosure(0);
         long greedyMask = 0L;
-        if (branchCount > 0) {
+        int count;
+        {
+            int s0 = extBase[0];
+            int s1 = extBase[1];
+            int s2 = extBase[2];
+            int s3 = extBase[3];
+            int s4 = extBase[4];
+            int n0 = Integer.MIN_VALUE;
+            int n1 = Integer.MIN_VALUE;
+            int n2 = Integer.MIN_VALUE;
+            int n3 = Integer.MIN_VALUE;
+            int n4 = Integer.MIN_VALUE;
+            count = extractedCount;
             boolean progress = true;
             while (progress) {
                 progress = false;
+                // Closure over pending forced items.
+                for (int slot = 0; slot < pendingCount; slot++) {
+                    int f = pending[slot];
+                    int[] r = fReq[f];
+                    if ((r[0] > 0 && s0 < r[0]) || (r[1] > 0 && s1 < r[1])
+                        || (r[2] > 0 && s2 < r[2]) || (r[3] > 0 && s3 < r[3])
+                        || (r[4] > 0 && s4 < r[4])) {
+                        continue;
+                    }
+                    int[] b = fBon[f];
+                    s0 += b[0];
+                    s1 += b[1];
+                    s2 += b[2];
+                    s3 += b[3];
+                    s4 += b[4];
+                    equippedForced[f] = true;
+                    closureLog[closureSize++] = f;
+                    int last = pendingCount - 1;
+                    int moved = pending[last];
+                    pending[slot] = moved;
+                    pendingPos[moved] = slot;
+                    pending[last] = f;
+                    pendingPos[f] = last;
+                    pendingCount = last;
+                    count++;
+                    slot--;
+                    progress = true;
+                }
+                // Invariant-checked branch adds.
                 for (int p = 0; p < branchCount; p++) {
                     if ((greedyMask & (1L << p)) != 0) {
                         continue;
                     }
-                    long stats = statsPkStack[0];
-                    if (!ge5(stats, bReqPk[p])) {
+                    int[] r = pReq[p];
+                    if ((r[0] > 0 && s0 < r[0]) || (r[1] > 0 && s1 < r[1])
+                        || (r[2] > 0 && s2 < r[2]) || (r[3] > 0 && s3 < r[3])
+                        || (r[4] > 0 && s4 < r[4])) {
                         continue;
                     }
-                    long newStats = stats + bBonPk[p] - BIAS_5;
-                    long newNeed = max5(needPkStack[0], bRpbPk[p]);
-                    if (!ge5(newStats, newNeed)) {
+                    int[] b = pBon[p];
+                    int t0 = s0 + b[0];
+                    int t1 = s1 + b[1];
+                    int t2 = s2 + b[2];
+                    int t3 = s3 + b[3];
+                    int t4 = s4 + b[4];
+                    int m0 = r[0] > 0 ? r[0] + b[0] : Integer.MIN_VALUE;
+                    int m1 = r[1] > 0 ? r[1] + b[1] : Integer.MIN_VALUE;
+                    int m2 = r[2] > 0 ? r[2] + b[2] : Integer.MIN_VALUE;
+                    int m3 = r[3] > 0 ? r[3] + b[3] : Integer.MIN_VALUE;
+                    int m4 = r[4] > 0 ? r[4] + b[4] : Integer.MIN_VALUE;
+                    if (m0 < n0) {
+                        m0 = n0;
+                    }
+                    if (m1 < n1) {
+                        m1 = n1;
+                    }
+                    if (m2 < n2) {
+                        m2 = n2;
+                    }
+                    if (m3 < n3) {
+                        m3 = n3;
+                    }
+                    if (m4 < n4) {
+                        m4 = n4;
+                    }
+                    if (t0 < m0 || t1 < m1 || t2 < m2 || t3 < m3 || t4 < m4) {
                         continue;
                     }
-                    statsPkStack[0] = newStats;
-                    needPkStack[0] = newNeed;
+                    s0 = t0;
+                    s1 = t1;
+                    s2 = t2;
+                    s3 = t3;
+                    s4 = t4;
+                    n0 = m0;
+                    n1 = m1;
+                    n2 = m2;
+                    n3 = m3;
+                    n4 = m4;
                     greedyMask |= 1L << p;
                     count++;
-                    count += runClosure(0);
                     progress = true;
                 }
             }
@@ -451,6 +526,7 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             return;
         }
 
+        packSurvivors();
         computeDupPred();
         bestCount = count;
         bestWeight = pathWeight(greedyMask);
@@ -488,22 +564,22 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             if (fKeys[i - 1] <= key) {
                 continue;
             }
-            long rq = fReqPk[i];
-            long bo = fBonPk[i];
+            int[] rq = fReq[i];
+            int[] bo = fBon[i];
             int sc = fScore[i];
             int j = i - 1;
             while (j >= 0 && fKeys[j] > key) {
                 fKeys[j + 1] = fKeys[j];
                 forcedItem[j + 1] = forcedItem[j];
-                fReqPk[j + 1] = fReqPk[j];
-                fBonPk[j + 1] = fBonPk[j];
+                fReq[j + 1] = fReq[j];
+                fBon[j + 1] = fBon[j];
                 fScore[j + 1] = fScore[j];
                 j--;
             }
             fKeys[j + 1] = key;
             forcedItem[j + 1] = item;
-            fReqPk[j + 1] = rq;
-            fBonPk[j + 1] = bo;
+            fReq[j + 1] = rq;
+            fBon[j + 1] = bo;
             fScore[j + 1] = sc;
         }
     }
@@ -515,27 +591,55 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             if (bKeys[i - 1] < key || (bKeys[i - 1] == key && branchItem[i - 1] < item)) {
                 continue;
             }
-            long rq = bReqPk[i];
-            long bo = bBonPk[i];
-            long rb = bRpbPk[i];
+            int[] rq = pReq[i];
+            int[] bo = pBon[i];
             int sc = bScore[i];
             int j = i - 1;
             while (j >= 0 && (bKeys[j] > key || (bKeys[j] == key && branchItem[j] > item))) {
                 bKeys[j + 1] = bKeys[j];
                 branchItem[j + 1] = branchItem[j];
-                bReqPk[j + 1] = bReqPk[j];
-                bBonPk[j + 1] = bBonPk[j];
-                bRpbPk[j + 1] = bRpbPk[j];
+                pReq[j + 1] = pReq[j];
+                pBon[j + 1] = pBon[j];
                 bScore[j + 1] = bScore[j];
                 j--;
             }
             bKeys[j + 1] = key;
             branchItem[j + 1] = item;
-            bReqPk[j + 1] = rq;
-            bBonPk[j + 1] = bo;
-            bRpbPk[j + 1] = rb;
+            pReq[j + 1] = rq;
+            pBon[j + 1] = bo;
             bScore[j + 1] = sc;
         }
+    }
+
+    /** Builds the packed survivor data; called only when the DFS is needed. */
+    private void packSurvivors() {
+        for (int f = 0; f < forcedCount; f++) {
+            int[] r = fReq[f];
+            int[] b = fBon[f];
+            fReqPk[f] = packReq(r);
+            fBonPk[f] = pack(b[0], b[1], b[2], b[3], b[4]);
+        }
+        for (int p = 0; p < branchCount; p++) {
+            int[] r = pReq[p];
+            int[] b = pBon[p];
+            bReqPk[p] = packReq(r);
+            bBonPk[p] = pack(b[0], b[1], b[2], b[3], b[4]);
+            long rpb = 0L;
+            for (int s = 0; s < S; s++) {
+                if (r[s] > 0) {
+                    rpb |= ((long) (r[s] + b[s] + 1024)) << (12 * s);
+                }
+            }
+            bRpbPk[p] = rpb;
+        }
+    }
+
+    private static long packReq(int[] r) {
+        return (long) (r[0] <= 0 ? 0 : r[0] + 1024)
+            | ((long) (r[1] <= 0 ? 0 : r[1] + 1024)) << 12
+            | ((long) (r[2] <= 0 ? 0 : r[2] + 1024)) << 24
+            | ((long) (r[3] <= 0 ? 0 : r[3] + 1024)) << 36
+            | ((long) (r[4] <= 0 ? 0 : r[4] + 1024)) << 48;
     }
 
     private void computeDupPred() {

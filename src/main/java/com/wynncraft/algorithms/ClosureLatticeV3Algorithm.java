@@ -208,61 +208,74 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             return buildResult(equipment, count, player);
         }
 
-        // Pass A: risky lanes + domain guard inputs. Bonus arrays are only
-        // scanned for items that declare a negative bonus; the guard's
-        // per-lane |bonus| sums come from the same scans plus a cheap pass.
+        // Pass 1: extraction + survivor collection in a single sweep. Extracted
+        // items (no requirements, no negative bonus - unconditionally optimal)
+        // cost a handful of scalar adds; every other cost, including the
+        // domain-guard arithmetic, is confined to the few survivors.
         int riskyMask = 0;
-        int maxReq = 0;
-        int maxPosBonus = 0;
-        long abs0 = Math.abs(base[0]);
-        long abs1 = Math.abs(base[1]);
-        long abs2 = Math.abs(base[2]);
-        long abs3 = Math.abs(base[3]);
-        long abs4 = Math.abs(base[4]);
+        int ext0 = base[0];
+        int ext1 = base[1];
+        int ext2 = base[2];
+        int ext3 = base[3];
+        int ext4 = base[4];
+        int survivors = 0;
+        extractedCount = 0;
+        extractedScore = 0;
         for (int i = 0; i < count; i++) {
             IEquipment item = equipment.get(i);
+            int[] r = item.requirements();
             int[] b = item.bonuses();
+            boolean neg = negFlag[i];
+            if (!neg && r[0] <= 0 && r[1] <= 0 && r[2] <= 0 && r[3] <= 0 && r[4] <= 0) {
+                valid[i] = true;
+                extractedCount++;
+                extractedScore += b[0] + b[1] + b[2] + b[3] + b[4];
+                ext0 += b[0];
+                ext1 += b[1];
+                ext2 += b[2];
+                ext3 += b[3];
+                ext4 += b[4];
+                continue;
+            }
+            valid[i] = false;
             bonRef[i] = b;
-            if (negFlag[i]) {
+            wlIdx[survivors] = i;
+            wlReq[survivors] = r;
+            survivors++;
+            if (neg) {
                 for (int s = 0; s < S; s++) {
                     if (b[s] < 0) {
                         riskyMask |= 1 << s;
                     }
                 }
             }
-            int b0 = b[0];
-            int b1 = b[1];
-            int b2 = b[2];
-            int b3 = b[3];
-            int b4 = b[4];
-            abs0 += Math.abs(b0);
-            abs1 += Math.abs(b1);
-            abs2 += Math.abs(b2);
-            abs3 += Math.abs(b3);
-            abs4 += Math.abs(b4);
-            int mx = Math.max(Math.max(b0, b1), Math.max(Math.max(b2, b3), b4));
+        }
+
+        // Pass 2: classification, packing and the domain guard - survivors only.
+        // Cumulative lane bounds: |base| plus extracted positives (ext - base)
+        // plus survivor |bonus| sums.
+        int maxReq = 0;
+        int maxPosBonus = 0;
+        long abs0 = Math.abs(base[0]) + (ext0 - base[0]);
+        long abs1 = Math.abs(base[1]) + (ext1 - base[1]);
+        long abs2 = Math.abs(base[2]) + (ext2 - base[2]);
+        long abs3 = Math.abs(base[3]) + (ext3 - base[3]);
+        long abs4 = Math.abs(base[4]) + (ext4 - base[4]);
+        forcedCount = 0;
+        branchCount = 0;
+        for (int k = 0; k < survivors; k++) {
+            int i = wlIdx[k];
+            int[] r = wlReq[k];
+            int[] b = bonRef[i];
+            abs0 += Math.abs(b[0]);
+            abs1 += Math.abs(b[1]);
+            abs2 += Math.abs(b[2]);
+            abs3 += Math.abs(b[3]);
+            abs4 += Math.abs(b[4]);
+            int mx = Math.max(Math.max(b[0], b[1]), Math.max(Math.max(b[2], b[3]), b[4]));
             if (mx > maxPosBonus) {
                 maxPosBonus = mx;
             }
-        }
-
-        // Pass B: extraction + classification of survivors. Requirements are
-        // read once per item here. Extracted bonuses accumulate as scalars and
-        // are packed once, after the domain guard has vouched for the ranges.
-        int ext0 = base[0];
-        int ext1 = base[1];
-        int ext2 = base[2];
-        int ext3 = base[3];
-        int ext4 = base[4];
-        Arrays.fill(valid, 0, count, false);
-        forcedCount = 0;
-        branchCount = 0;
-        extractedCount = 0;
-        extractedScore = 0;
-        for (int i = 0; i < count; i++) {
-            IEquipment item = equipment.get(i);
-            int[] r = item.requirements();
-            int[] b = bonRef[i];
             int r0 = Math.max(r[0], 0);
             int r1 = Math.max(r[1], 0);
             int r2 = Math.max(r[2], 0);
@@ -276,19 +289,6 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             }
             boolean neg = negFlag[i];
             int sc = b[0] + b[1] + b[2] + b[3] + b[4];
-            if (!neg && reqLanes == 0) {
-                // Unconditionally optimal: no requirements to check, bonuses
-                // can only help, nothing can ever invalidate it.
-                valid[i] = true;
-                extractedCount++;
-                extractedScore += sc;
-                ext0 += b[0];
-                ext1 += b[1];
-                ext2 += b[2];
-                ext3 += b[3];
-                ext4 += b[4];
-                continue;
-            }
             long reqPk = (long) (r0 == 0 ? 0 : r0 + 1024)
                 | ((long) (r1 == 0 ? 0 : r1 + 1024)) << 12
                 | ((long) (r2 == 0 ? 0 : r2 + 1024)) << 24

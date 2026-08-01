@@ -52,6 +52,9 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
     // Per-item minimal data.
     private int[][] bonRef = new int[0][];
     private boolean[] valid = new boolean[0];
+    private boolean[] negFlag = new boolean[0];
+    private int[] wlIdx = new int[0];
+    private int[][] wlReq = new int[0][];
     private final int[] base = new int[S];
     private final int[] bonusTotal = new int[S];
 
@@ -139,6 +142,72 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             base[s] = player.allocated(SKILL_POINTS[s]);
         }
 
+        // Pass 0: negative-bonus pre-scan (one precomputed-flag call per item).
+        boolean anyNeg = false;
+        for (int i = 0; i < count; i++) {
+            boolean neg = equipment.get(i).hasNegativeBonus();
+            negFlag[i] = neg;
+            anyNeg |= neg;
+        }
+
+        if (!anyNeg) {
+            // No item reduces any skill: feasibility is a monotone closure.
+            // Scalar, no packing, no domain guard needed; a compact worklist
+            // keeps fixpoint passes to the still-undecided items only.
+            int s0 = base[0];
+            int s1 = base[1];
+            int s2 = base[2];
+            int s3 = base[3];
+            int s4 = base[4];
+            int wl = 0;
+            for (int i = 0; i < count; i++) {
+                IEquipment item = equipment.get(i);
+                int[] r = item.requirements();
+                if ((r[0] <= 0 || s0 >= r[0]) && (r[1] <= 0 || s1 >= r[1])
+                    && (r[2] <= 0 || s2 >= r[2]) && (r[3] <= 0 || s3 >= r[3])
+                    && (r[4] <= 0 || s4 >= r[4])) {
+                    int[] b = item.bonuses();
+                    s0 += b[0];
+                    s1 += b[1];
+                    s2 += b[2];
+                    s3 += b[3];
+                    s4 += b[4];
+                    valid[i] = true;
+                } else {
+                    valid[i] = false;
+                    wlIdx[wl] = i;
+                    wlReq[wl] = r;
+                    wl++;
+                }
+            }
+            boolean progress = wl > 0;
+            while (progress) {
+                progress = false;
+                for (int k = 0; k < wl; k++) {
+                    int[] r = wlReq[k];
+                    if ((r[0] > 0 && s0 < r[0]) || (r[1] > 0 && s1 < r[1])
+                        || (r[2] > 0 && s2 < r[2]) || (r[3] > 0 && s3 < r[3])
+                        || (r[4] > 0 && s4 < r[4])) {
+                        continue;
+                    }
+                    int i = wlIdx[k];
+                    int[] b = equipment.get(i).bonuses();
+                    s0 += b[0];
+                    s1 += b[1];
+                    s2 += b[2];
+                    s3 += b[3];
+                    s4 += b[4];
+                    valid[i] = true;
+                    wl--;
+                    wlIdx[k] = wlIdx[wl];
+                    wlReq[k] = wlReq[wl];
+                    k--;
+                    progress = true;
+                }
+            }
+            return buildResult(equipment, count, player);
+        }
+
         // Pass A: risky lanes + domain guard inputs. Bonus arrays are only
         // scanned for items that declare a negative bonus; the guard's
         // per-lane |bonus| sums come from the same scans plus a cheap pass.
@@ -154,7 +223,7 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             IEquipment item = equipment.get(i);
             int[] b = item.bonuses();
             bonRef[i] = b;
-            if (item.hasNegativeBonus()) {
+            if (negFlag[i]) {
                 for (int s = 0; s < S; s++) {
                     if (b[s] < 0) {
                         riskyMask |= 1 << s;
@@ -178,8 +247,13 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
         }
 
         // Pass B: extraction + classification of survivors. Requirements are
-        // read once per item here.
-        long stats = pack(base[0], base[1], base[2], base[3], base[4]);
+        // read once per item here. Extracted bonuses accumulate as scalars and
+        // are packed once, after the domain guard has vouched for the ranges.
+        int ext0 = base[0];
+        int ext1 = base[1];
+        int ext2 = base[2];
+        int ext3 = base[3];
+        int ext4 = base[4];
         Arrays.fill(valid, 0, count, false);
         forcedCount = 0;
         branchCount = 0;
@@ -200,7 +274,7 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             if (reqMax > maxReq) {
                 maxReq = reqMax;
             }
-            boolean neg = item.hasNegativeBonus();
+            boolean neg = negFlag[i];
             int sc = b[0] + b[1] + b[2] + b[3] + b[4];
             if (!neg && reqLanes == 0) {
                 // Unconditionally optimal: no requirements to check, bonuses
@@ -208,7 +282,11 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
                 valid[i] = true;
                 extractedCount++;
                 extractedScore += sc;
-                stats += pack(b[0], b[1], b[2], b[3], b[4]) - BIAS_5;
+                ext0 += b[0];
+                ext1 += b[1];
+                ext2 += b[2];
+                ext3 += b[3];
+                ext4 += b[4];
                 continue;
             }
             long reqPk = (long) (r0 == 0 ? 0 : r0 + 1024)
@@ -254,9 +332,12 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             return scalar.run(player);
         }
 
-        extractedStatsPk = stats;
+        extractedStatsPk = pack(ext0, ext1, ext2, ext3, ext4);
         solve();
+        return buildResult(equipment, count, player);
+    }
 
+    private Result buildResult(List<IEquipment> equipment, int count, WynnPlayer player) {
         List<IEquipment> validList = new ArrayList<>(count);
         List<IEquipment> invalidList = new ArrayList<>(count);
         for (int s = 0; s < S; s++) {
@@ -266,7 +347,7 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             IEquipment item = equipment.get(i);
             if (valid[i]) {
                 validList.add(item);
-                int[] b = bonRef[i];
+                int[] b = item.bonuses();
                 for (int s = 0; s < S; s++) {
                     bonusTotal[s] += b[s];
                 }
@@ -301,6 +382,9 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
         bScore = new int[cap];
         bKeys = new int[cap];
         dupPred = new long[cap];
+        negFlag = new boolean[cap];
+        wlIdx = new int[cap];
+        wlReq = new int[cap][];
         equippedForced = new boolean[cap];
         closureLog = new int[cap];
         statsPkStack = new long[cap + 2];
@@ -313,8 +397,14 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
         if (forcedCount + branchCount == 0) {
             return; // extraction equipped everything relevant
         }
-        sortForced();
-        sortBranch();
+        // Sorting is a pass-count heuristic, not a correctness requirement;
+        // for the small survivor sets of real builds the scan order is fine.
+        if (forcedCount > 8) {
+            sortForced();
+        }
+        if (branchCount > 8) {
+            sortBranch();
+        }
 
         // Greedy constructive attempt.
         resetPending();

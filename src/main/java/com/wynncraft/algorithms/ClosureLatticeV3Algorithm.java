@@ -55,6 +55,7 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
     private boolean[] negFlag = new boolean[0];
     private int[] wlIdx = new int[0];
     private int[][] wlReq = new int[0][];
+    private int[][] wlBon = new int[0][];
     private int[][] fReq = new int[0][];
     private int[][] fBon = new int[0][];
     private int[][] pReq = new int[0][];
@@ -189,9 +190,16 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
                 wl++;
             }
         }
+        int neg0 = 0;
+        int neg1 = 0;
+        int neg2 = 0;
+        int neg3 = 0;
+        int neg4 = 0;
         if (firstNeg >= 0) {
-            // Negatives exist: finish with a flags-only scan; the optimistic
-            // work done so far is discarded and the general path re-derives it.
+            // Negatives exist: finish with a flags-only scan collecting the
+            // reducible lanes and the per-lane negative sums (the worst-case
+            // reduction any outcome can apply); the optimistic work done so
+            // far is discarded and the general path re-derives it.
             for (int i = firstNeg; i < count; i++) {
                 IEquipment item = equipment.get(i);
                 boolean neg = item.hasNegativeBonus();
@@ -203,6 +211,11 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
                             riskyMask |= 1 << s;
                         }
                     }
+                    neg0 += Math.min(b[0], 0);
+                    neg1 += Math.min(b[1], 0);
+                    neg2 += Math.min(b[2], 0);
+                    neg3 += Math.min(b[3], 0);
+                    neg4 += Math.min(b[4], 0);
                 }
             }
         }
@@ -238,10 +251,13 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             return buildResult(equipment, count, player);
         }
 
-        // Pass 1: extraction, classification, and the domain guard in a single
-        // sweep (riskyMask is already known from pass 0). Extracted items (no
-        // requirements, no negative bonus - unconditionally optimal) cost a
-        // handful of scalar adds; everything else is survivor-only.
+        // Pass 1: worst-case-sufficiency extraction (Banker's-style): minSP =
+        // extracted stats + the sum of every negative component in the input
+        // is a lower bound on the stats any reachable state grants an item
+        // excluding its own bonus. A non-negative item whose requirements pass
+        // under minSP is equippable and never invalidated in EVERY outcome, so
+        // taking it is lexicographically dominant. Extraction runs to fixpoint;
+        // only the remaining survivors are classified, guarded and searched.
         int ext0 = base[0];
         int ext1 = base[1];
         int ext2 = base[2];
@@ -258,12 +274,15 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
         extractedScore = 0;
         forcedCount = 0;
         branchCount = 0;
+        wl = 0;
         for (int i = 0; i < count; i++) {
             IEquipment item = equipment.get(i);
             int[] r = item.requirements();
             int[] b = item.bonuses();
-            boolean neg = negFlag[i];
-            if (!neg && r[0] <= 0 && r[1] <= 0 && r[2] <= 0 && r[3] <= 0 && r[4] <= 0) {
+            if (!negFlag[i]
+                && (r[0] <= 0 || ext0 + neg0 >= r[0]) && (r[1] <= 0 || ext1 + neg1 >= r[1])
+                && (r[2] <= 0 || ext2 + neg2 >= r[2]) && (r[3] <= 0 || ext3 + neg3 >= r[3])
+                && (r[4] <= 0 || ext4 + neg4 >= r[4])) {
                 valid[i] = true;
                 extractedCount++;
                 extractedScore += b[0] + b[1] + b[2] + b[3] + b[4];
@@ -275,6 +294,48 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
                 continue;
             }
             valid[i] = false;
+            wlIdx[wl] = i;
+            wlReq[wl] = r;
+            wlBon[wl] = b;
+            wl++;
+        }
+        // Fixpoint: earlier-deferred non-negative items may now pass minSP.
+        boolean extractedMore = extractedCount > 0;
+        while (extractedMore) {
+            extractedMore = false;
+            for (int k = 0; k < wl; k++) {
+                int i = wlIdx[k];
+                if (negFlag[i]) {
+                    continue;
+                }
+                int[] r = wlReq[k];
+                if ((r[0] > 0 && ext0 + neg0 < r[0]) || (r[1] > 0 && ext1 + neg1 < r[1])
+                    || (r[2] > 0 && ext2 + neg2 < r[2]) || (r[3] > 0 && ext3 + neg3 < r[3])
+                    || (r[4] > 0 && ext4 + neg4 < r[4])) {
+                    continue;
+                }
+                int[] b = wlBon[k];
+                valid[i] = true;
+                extractedCount++;
+                extractedScore += b[0] + b[1] + b[2] + b[3] + b[4];
+                ext0 += b[0];
+                ext1 += b[1];
+                ext2 += b[2];
+                ext3 += b[3];
+                ext4 += b[4];
+                wl--;
+                wlIdx[k] = wlIdx[wl];
+                wlReq[k] = wlReq[wl];
+                wlBon[k] = wlBon[wl];
+                k--;
+                extractedMore = true;
+            }
+        }
+        // Classify the survivors.
+        for (int k = 0; k < wl; k++) {
+            int i = wlIdx[k];
+            int[] r = wlReq[k];
+            int[] b = wlBon[k];
             bonRef[i] = b;
             abs0 += Math.abs(b[0]);
             abs1 += Math.abs(b[1]);
@@ -297,7 +358,7 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
                 maxReq = reqMax;
             }
             int sc = b[0] + b[1] + b[2] + b[3] + b[4];
-            if (!neg && (reqLanes & riskyMask) == 0) {
+            if (!negFlag[i] && (reqLanes & riskyMask) == 0) {
                 int f = forcedCount++;
                 forcedItem[f] = i;
                 fReq[f] = r;
@@ -316,7 +377,7 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
                         rpbSum += r[s] + b[s];
                     }
                 }
-                bKeys[p] = neg ? (1 << 30) - rpbSum : r0 + r1 + r2 + r3 + r4;
+                bKeys[p] = negFlag[i] ? (1 << 30) - rpbSum : r0 + r1 + r2 + r3 + r4;
             }
         }
 
@@ -430,6 +491,7 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
         negFlag = new boolean[cap];
         wlIdx = new int[cap];
         wlReq = new int[cap][];
+        wlBon = new int[cap][];
         fReq = new int[cap][];
         fBon = new int[cap][];
         pReq = new int[cap][];

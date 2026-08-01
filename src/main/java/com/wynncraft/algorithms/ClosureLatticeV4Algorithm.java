@@ -95,6 +95,12 @@ public class ClosureLatticeV4Algorithm implements IAlgorithm<WynnPlayer> {
             int[] b = item.bonuses();
             boolean neg = item.hasNegativeBonus();
             negItem[i] = neg;
+            if (!neg && (r[0] | r[1] | r[2] | r[3] | r[4]) == 0
+                && (b[0] | b[1] | b[2] | b[3] | b[4]) == 0) {
+                // Zero-stat item (tomes): unconditionally valid, never stored.
+                result[i] = true;
+                continue;
+            }
             req[off] = r[0];
             req[off + 1] = r[1];
             req[off + 2] = r[2];
@@ -162,7 +168,23 @@ public class ClosureLatticeV4Algorithm implements IAlgorithm<WynnPlayer> {
         }
 
         int bestCombo = 0;
-        if (m > 0) {
+        if (m == 1) {
+            if ((req[0] <= 0 || cur0 >= req[0]) && (req[1] <= 0 || cur1 >= req[1])
+                && (req[2] <= 0 || cur2 >= req[2]) && (req[3] <= 0 || cur3 >= req[3])
+                && (req[4] <= 0 || cur4 >= req[4])) {
+                bestCombo = 1;
+            }
+            if (bestCombo != 0) {
+                result[itemIdx[0]] = true;
+            }
+        } else if (m == 2) {
+            bestCombo = solve2(cur0, cur1, cur2, cur3, cur4);
+            for (int slot = 0; slot < 2; slot++) {
+                if ((bestCombo & (1 << slot)) != 0) {
+                    result[itemIdx[slot]] = true;
+                }
+            }
+        } else if (m > 0) {
             bestCombo = search(m, cur0, cur1, cur2, cur3, cur4);
             for (int slot = 0; slot < m; slot++) {
                 if ((bestCombo & (1 << slot)) != 0) {
@@ -298,6 +320,47 @@ public class ClosureLatticeV4Algorithm implements IAlgorithm<WynnPlayer> {
         }
         visitedLarge = null;
         return bestCombo;
+    }
+
+    /**
+     * Exact two-item case, fully unrolled. A pair is feasible via some order
+     * iff the first inserts at current stats and, after both are applied,
+     * each member holds totals-minus-own-bonus >= requirements.
+     */
+    private int solve2(int c0, int c1, int c2, int c3, int c4) {
+        boolean v0 = meets(0, c0, c1, c2, c3, c4);
+        boolean v1 = meets(S, c0, c1, c2, c3, c4);
+        // Pair: both members' exclude-self totals must meet their requirements,
+        // and at least one order must start legally.
+        boolean pair = (v0 || v1)
+            && meets(0, c0 + bon[S], c1 + bon[S + 1], c2 + bon[S + 2], c3 + bon[S + 3], c4 + bon[S + 4])
+            && meets(S, c0 + bon[0], c1 + bon[1], c2 + bon[2], c3 + bon[3], c4 + bon[4]);
+        if (pair) {
+            // Verify a legal order exists: the startable item goes first.
+            if (v0 || v1) {
+                return 3;
+            }
+        }
+        if (v0 && v1) {
+            int t0 = bon[0] + bon[1] + bon[2] + bon[3] + bon[4];
+            int t1 = bon[S] + bon[S + 1] + bon[S + 2] + bon[S + 3] + bon[S + 4];
+            return t0 >= t1 ? 1 : 2;
+        }
+        if (v0) {
+            return 1;
+        }
+        if (v1) {
+            return 2;
+        }
+        return 0;
+    }
+
+    private boolean meets(int off, int c0, int c1, int c2, int c3, int c4) {
+        return (req[off] <= 0 || c0 >= req[off])
+            && (req[off + 1] <= 0 || c1 >= req[off + 1])
+            && (req[off + 2] <= 0 || c2 >= req[off + 2])
+            && (req[off + 3] <= 0 || c3 >= req[off + 3])
+            && (req[off + 4] <= 0 || c4 >= req[off + 4]);
     }
 
     private void ensureCapacity(int items) {

@@ -184,6 +184,13 @@ public class ClosureLatticeV4Algorithm implements IAlgorithm<WynnPlayer> {
                     result[itemIdx[slot]] = true;
                 }
             }
+        } else if (m == 3) {
+            bestCombo = solve3(cur0, cur1, cur2, cur3, cur4);
+            for (int slot = 0; slot < 3; slot++) {
+                if ((bestCombo & (1 << slot)) != 0) {
+                    result[itemIdx[slot]] = true;
+                }
+            }
         } else if (m > 0) {
             bestCombo = search(m, cur0, cur1, cur2, cur3, cur4);
             for (int slot = 0; slot < m; slot++) {
@@ -361,6 +368,121 @@ public class ClosureLatticeV4Algorithm implements IAlgorithm<WynnPlayer> {
             && (req[off + 2] <= 0 || c2 >= req[off + 2])
             && (req[off + 3] <= 0 || c3 >= req[off + 3])
             && (req[off + 4] <= 0 || c4 >= req[off + 4]);
+    }
+
+    /**
+     * Exact three-item case: evaluate the triple via subset feasibility (the
+     * pair logic generalized), preferring larger subsets then higher totals.
+     * A subset is feasible iff every member's exclude-self totals meet its
+     * requirements and some member can insert first at each step - checked
+     * here by trying insertion orders over the (at most 6) permutations.
+     */
+    private int solve3(int c0, int c1, int c2, int c3, int c4) {
+        int bestCombo = 0;
+        int bestCount = 0;
+        int bestTotal = Integer.MIN_VALUE;
+        for (int combo = 1; combo < 8; combo++) {
+            int count = Integer.bitCount(combo);
+            if (count < bestCount) {
+                continue;
+            }
+            if (!feasibleSmall(combo, c0, c1, c2, c3, c4)) {
+                continue;
+            }
+            int t0 = c0;
+            int t1 = c1;
+            int t2 = c2;
+            int t3 = c3;
+            int t4 = c4;
+            for (int rem = combo; rem != 0; rem &= rem - 1) {
+                int off = Integer.numberOfTrailingZeros(rem) * S;
+                t0 += bon[off];
+                t1 += bon[off + 1];
+                t2 += bon[off + 2];
+                t3 += bon[off + 3];
+                t4 += bon[off + 4];
+            }
+            int total = t0 + t1 + t2 + t3 + t4;
+            if (count > bestCount || (count == bestCount && total > bestTotal)) {
+                bestCombo = combo;
+                bestCount = count;
+                bestTotal = total;
+            }
+        }
+        return bestCombo;
+    }
+
+    /** Order-existence check for a small subset by DFS over insertion orders. */
+    private boolean feasibleSmall(int combo, int c0, int c1, int c2, int c3, int c4) {
+        // Final-state exclude-self check for every member first (necessary).
+        int f0 = c0;
+        int f1 = c1;
+        int f2 = c2;
+        int f3 = c3;
+        int f4 = c4;
+        for (int rem = combo; rem != 0; rem &= rem - 1) {
+            int off = Integer.numberOfTrailingZeros(rem) * S;
+            f0 += bon[off];
+            f1 += bon[off + 1];
+            f2 += bon[off + 2];
+            f3 += bon[off + 3];
+            f4 += bon[off + 4];
+        }
+        for (int rem = combo; rem != 0; rem &= rem - 1) {
+            int off = Integer.numberOfTrailingZeros(rem) * S;
+            if ((req[off] > 0 && f0 - bon[off] < req[off])
+                || (req[off + 1] > 0 && f1 - bon[off + 1] < req[off + 1])
+                || (req[off + 2] > 0 && f2 - bon[off + 2] < req[off + 2])
+                || (req[off + 3] > 0 && f3 - bon[off + 3] < req[off + 3])
+                || (req[off + 4] > 0 && f4 - bon[off + 4] < req[off + 4])) {
+                return false;
+            }
+        }
+        return orderExists(combo, 0, c0, c1, c2, c3, c4);
+    }
+
+    private boolean orderExists(int remaining, int added, int c0, int c1, int c2, int c3, int c4) {
+        if (remaining == 0) {
+            return true;
+        }
+        for (int rem = remaining; rem != 0; rem &= rem - 1) {
+            int slot = Integer.numberOfTrailingZeros(rem);
+            int off = slot * S;
+            if ((req[off] > 0 && c0 < req[off])
+                || (req[off + 1] > 0 && c1 < req[off + 1])
+                || (req[off + 2] > 0 && c2 < req[off + 2])
+                || (req[off + 3] > 0 && c3 < req[off + 3])
+                || (req[off + 4] > 0 && c4 < req[off + 4])) {
+                continue;
+            }
+            int n0 = c0 + bon[off];
+            int n1 = c1 + bon[off + 1];
+            int n2 = c2 + bon[off + 2];
+            int n3 = c3 + bon[off + 3];
+            int n4 = c4 + bon[off + 4];
+            if (negItem[slot]) {
+                // Invariant re-check for already-added members.
+                boolean ok = true;
+                for (int rem2 = added; rem2 != 0; rem2 &= rem2 - 1) {
+                    int off2 = Integer.numberOfTrailingZeros(rem2) * S;
+                    if ((req[off2] > 0 && n0 - bon[off2] < req[off2])
+                        || (req[off2 + 1] > 0 && n1 - bon[off2 + 1] < req[off2 + 1])
+                        || (req[off2 + 2] > 0 && n2 - bon[off2 + 2] < req[off2 + 2])
+                        || (req[off2 + 3] > 0 && n3 - bon[off2 + 3] < req[off2 + 3])
+                        || (req[off2 + 4] > 0 && n4 - bon[off2 + 4] < req[off2 + 4])) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (!ok) {
+                    continue;
+                }
+            }
+            if (orderExists(remaining & ~(1 << slot), added | (1 << slot), n0, n1, n2, n3, n4)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void ensureCapacity(int items) {

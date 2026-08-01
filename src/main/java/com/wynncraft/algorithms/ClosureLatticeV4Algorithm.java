@@ -193,21 +193,16 @@ public class ClosureLatticeV4Algorithm implements IAlgorithm<WynnPlayer> {
             }
         }
 
-        // Build result + one batched modify. Reused backing array with
-        // lightweight list views (same convention as other merged
-        // zero-allocation entries): valid from the front, invalid from count.
-        if (resultItems.length < count * 2) {
-            resultItems = new IEquipment[Math.max(count * 2, resultItems.length * 2 + 16)];
-        }
-        int validN = 0;
-        int invalidN = 0;
+        // Build result + one batched modify.
+        List<IEquipment> validList = new ArrayList<>(count);
+        List<IEquipment> invalidList = new ArrayList<>(count);
         for (int s = 0; s < S; s++) {
             bonusTotal[s] = 0;
         }
         for (int i = 0; i < count; i++) {
             IEquipment item = equipment.get(i);
             if (result[i]) {
-                resultItems[validN++] = item;
+                validList.add(item);
                 int[] b = item.bonuses();
                 bonusTotal[0] += b[0];
                 bonusTotal[1] += b[1];
@@ -215,44 +210,13 @@ public class ClosureLatticeV4Algorithm implements IAlgorithm<WynnPlayer> {
                 bonusTotal[3] += b[3];
                 bonusTotal[4] += b[4];
             } else {
-                resultItems[count + invalidN] = item;
-                invalidN++;
+                invalidList.add(item);
             }
         }
-        if (validN > 0) {
+        if (!validList.isEmpty()) {
             player.modify(bonusTotal, true);
         }
-        validView.set(resultItems, 0, validN);
-        invalidView.set(resultItems, count, invalidN);
-        return new Result(validView, invalidView);
-    }
-
-    private IEquipment[] resultItems = new IEquipment[0];
-    private final SliceList validView = new SliceList();
-    private final SliceList invalidView = new SliceList();
-
-    /** Fixed-slice random-access view over the reused result array. */
-    private static final class SliceList extends java.util.AbstractList<IEquipment>
-        implements java.util.RandomAccess {
-        private IEquipment[] items;
-        private int offset;
-        private int size;
-
-        void set(IEquipment[] items, int offset, int size) {
-            this.items = items;
-            this.offset = offset;
-            this.size = size;
-        }
-
-        @Override
-        public IEquipment get(int index) {
-            return items[offset + index];
-        }
-
-        @Override
-        public int size() {
-            return size;
-        }
+        return new Result(validList, invalidList);
     }
 
     /**

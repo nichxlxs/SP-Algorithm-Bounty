@@ -103,11 +103,16 @@ public class ClosureLatticeV5Algorithm implements IAlgorithm<WynnPlayer> {
             return scalar.run(player);
         }
 
-        int cur0 = player.allocated(SKILL_POINTS[0]);
-        int cur1 = player.allocated(SKILL_POINTS[1]);
-        int cur2 = player.allocated(SKILL_POINTS[2]);
-        int cur3 = player.allocated(SKILL_POINTS[3]);
-        int cur4 = player.allocated(SKILL_POINTS[4]);
+        int base0 = player.allocated(SKILL_POINTS[0]);
+        int base1 = player.allocated(SKILL_POINTS[1]);
+        int base2 = player.allocated(SKILL_POINTS[2]);
+        int base3 = player.allocated(SKILL_POINTS[3]);
+        int base4 = player.allocated(SKILL_POINTS[4]);
+        int cur0 = base0;
+        int cur1 = base1;
+        int cur2 = base2;
+        int cur3 = base3;
+        int cur4 = base4;
         int min0 = 0;
         int min1 = 0;
         int min2 = 0;
@@ -187,30 +192,34 @@ public class ClosureLatticeV5Algorithm implements IAlgorithm<WynnPlayer> {
             for (int slot = 0; slot < m; slot++) {
                 if ((bestCombo & (1 << slot)) != 0) {
                     result[itemIdx[slot]] = true;
+                    Vec5 b = itemBon[slot];
+                    cur0 += b.s0;
+                    cur1 += b.s1;
+                    cur2 += b.s2;
+                    cur3 += b.s3;
+                    cur4 += b.s4;
                 }
             }
         }
 
+        // The greedy/search stats already hold base + every valid bonus; the
+        // modify vector is their difference - no item is ever re-read.
         List<IEquipment> validList = new ArrayList<>(count);
         List<IEquipment> invalidList = new ArrayList<>(count);
-        for (int s = 0; s < S; s++) {
-            bonusTotal[s] = 0;
-        }
         for (int i = 0; i < count; i++) {
             IEquipment item = equipment.get(i);
             if (result[i]) {
                 validList.add(item);
-                int[] b = item.bonuses();
-                bonusTotal[0] += b[0];
-                bonusTotal[1] += b[1];
-                bonusTotal[2] += b[2];
-                bonusTotal[3] += b[3];
-                bonusTotal[4] += b[4];
             } else {
                 invalidList.add(item);
             }
         }
         if (!validList.isEmpty()) {
+            bonusTotal[0] = cur0 - base0;
+            bonusTotal[1] = cur1 - base1;
+            bonusTotal[2] = cur2 - base2;
+            bonusTotal[3] = cur3 - base3;
+            bonusTotal[4] = cur4 - base4;
             player.modify(bonusTotal, true);
         }
         return new Result(validList, invalidList);

@@ -148,54 +148,54 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             base[s] = player.allocated(SKILL_POINTS[s]);
         }
 
-        // Pass 0: negative-bonus pre-scan (one precomputed-flag call per item);
-        // reducible lanes are collected here from the few negative items.
+        // Optimistic single sweep: assume no item reduces any skill and run the
+        // monotone closure directly (scalar, no packing, no domain guard). The
+        // first negative item aborts into the general path, completing the
+        // negative-flag scan for the remaining items.
         int riskyMask = 0;
+        int firstNeg = -1;
+        int s0 = base[0];
+        int s1 = base[1];
+        int s2 = base[2];
+        int s3 = base[3];
+        int s4 = base[4];
+        int wl = 0;
         for (int i = 0; i < count; i++) {
             IEquipment item = equipment.get(i);
             boolean neg = item.hasNegativeBonus();
             negFlag[i] = neg;
             if (neg) {
+                firstNeg = i;
                 int[] b = item.bonuses();
                 for (int s = 0; s < S; s++) {
                     if (b[s] < 0) {
                         riskyMask |= 1 << s;
                     }
                 }
+                continue;
+            }
+            int[] r = item.requirements();
+            if ((r[0] <= 0 || s0 >= r[0]) && (r[1] <= 0 || s1 >= r[1])
+                && (r[2] <= 0 || s2 >= r[2]) && (r[3] <= 0 || s3 >= r[3])
+                && (r[4] <= 0 || s4 >= r[4])) {
+                int[] b = item.bonuses();
+                s0 += b[0];
+                s1 += b[1];
+                s2 += b[2];
+                s3 += b[3];
+                s4 += b[4];
+                valid[i] = true;
+            } else {
+                valid[i] = false;
+                wlIdx[wl] = i;
+                wlReq[wl] = r;
+                wl++;
             }
         }
-        boolean anyNeg = riskyMask != 0;
-
-        if (!anyNeg) {
+        if (firstNeg < 0) {
             // No item reduces any skill: feasibility is a monotone closure.
-            // Scalar, no packing, no domain guard needed; a compact worklist
-            // keeps fixpoint passes to the still-undecided items only.
-            int s0 = base[0];
-            int s1 = base[1];
-            int s2 = base[2];
-            int s3 = base[3];
-            int s4 = base[4];
-            int wl = 0;
-            for (int i = 0; i < count; i++) {
-                IEquipment item = equipment.get(i);
-                int[] r = item.requirements();
-                if ((r[0] <= 0 || s0 >= r[0]) && (r[1] <= 0 || s1 >= r[1])
-                    && (r[2] <= 0 || s2 >= r[2]) && (r[3] <= 0 || s3 >= r[3])
-                    && (r[4] <= 0 || s4 >= r[4])) {
-                    int[] b = item.bonuses();
-                    s0 += b[0];
-                    s1 += b[1];
-                    s2 += b[2];
-                    s3 += b[3];
-                    s4 += b[4];
-                    valid[i] = true;
-                } else {
-                    valid[i] = false;
-                    wlIdx[wl] = i;
-                    wlReq[wl] = r;
-                    wl++;
-                }
-            }
+            // Finish the fixpoint over the still-undecided worklist.
+            // (first sweep already ran above)
             boolean progress = wl > 0;
             while (progress) {
                 progress = false;

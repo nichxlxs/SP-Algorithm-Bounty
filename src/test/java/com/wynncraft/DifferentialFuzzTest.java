@@ -215,7 +215,7 @@ class DifferentialFuzzTest {
 
     // -------------------------------------------------------------- execution
 
-    private static final String[] LATTICE_NAMES = {"Closure Lattice V1", "Closure Lattice V2"};
+    private static final String[] LATTICE_NAMES = {"Closure Lattice V1", "Closure Lattice V2", "Closure Lattice V3"};
 
     private static AlgorithmRegistry.Entry entry(String name) {
         return AlgorithmRegistry.registry().stream()
@@ -233,10 +233,13 @@ class DifferentialFuzzTest {
     private static int[] runAlgorithm(AlgorithmRegistry.Entry entry, Instance inst, boolean validateShape) {
         int[] result = runAlgorithmOnce(entry, inst, validateShape);
         if (entry.name().equals(LATTICE_NAMES[0])) {
-            int[] v2 = runAlgorithmOnce(entry(LATTICE_NAMES[1]), inst, validateShape);
-            if (result[0] != v2[0] || result[1] != v2[1]) {
-                fail("V1/V2 divergence: v1 count=" + result[0] + " weight=" + result[1]
-                    + " v2 count=" + v2[0] + " weight=" + v2[1] + "\n" + describe(inst));
+            for (int v = 1; v < LATTICE_NAMES.length; v++) {
+                int[] other = runAlgorithmOnce(entry(LATTICE_NAMES[v]), inst, validateShape);
+                if (result[0] != other[0] || result[1] != other[1]) {
+                    fail(LATTICE_NAMES[v] + " diverges from V1: v1 count=" + result[0]
+                        + " weight=" + result[1] + " other count=" + other[0]
+                        + " weight=" + other[1] + "\n" + describe(inst));
+                }
             }
         }
         return result;

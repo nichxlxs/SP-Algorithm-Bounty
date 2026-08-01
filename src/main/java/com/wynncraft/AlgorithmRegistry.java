@@ -5,6 +5,7 @@ import com.wynncraft.algorithms.NegativeOrderAlgorithm;
 import com.wynncraft.algorithms.CapyTopoAlgorithm;
 import com.wynncraft.algorithms.ClosureLatticeAlgorithm;
 import com.wynncraft.algorithms.ClosureLatticeV2Algorithm;
+import com.wynncraft.algorithms.ClosureLatticeV3Algorithm;
 import com.wynncraft.algorithms.CascadeBoundChecker;
 import com.wynncraft.algorithms.GreedyAlgorithm;
 import com.wynncraft.algorithms.MyFirstAlgorithm;
@@ -60,6 +61,7 @@ public class AlgorithmRegistry {
         register(new StarvingGoblinAlgorithm(), StarvingPlayer.Builder::new);
         register(new ClosureLatticeAlgorithm(), WynnPlayer.Builder::new);
         register(new ClosureLatticeV2Algorithm(), WynnPlayer.Builder::new);
+        register(new ClosureLatticeV3Algorithm(), WynnPlayer.Builder::new);
     }
 
     /**

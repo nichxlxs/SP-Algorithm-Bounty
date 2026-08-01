@@ -536,7 +536,9 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
 
         prepareVisited();
         resetPending();
-        initRemaining();
+        if (branchCount > 10) {
+            initRemaining();
+        }
         statsPkStack[0] = extractedStatsPk;
         needPkStack[0] = 0L;
         closureSize = 0;
@@ -812,6 +814,18 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
 
         long stats = statsPkStack[depth];
         int d = depth * S;
+        // The admissible bound is a prune, not a correctness requirement; for
+        // small branch sets full enumeration is already visited- and
+        // budget-capped, so per-node bound scans only pay off beyond ~10.
+        if (branchCount > 10) {
+            if (!boundAllows(mask, depth, count, weight, stats, d)) {
+                return;
+            }
+        }
+        dfsChildren(mask, depth, count, weight, stats);
+    }
+
+    private boolean boundAllows(long mask, int depth, int count, int weight, long stats, int d) {
         long reach = 0L;
         for (int s = 0; s < S; s++) {
             int v = lane(stats, s) + remPosStack[d + s];
@@ -828,11 +842,12 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
                 countBound++;
             }
         }
-        if (countBound < bestCount
-            || (countBound == bestCount && weight + posScoreStack[depth] <= bestWeight)) {
-            return;
-        }
+        return countBound >= bestCount
+            && !(countBound == bestCount && weight + posScoreStack[depth] <= bestWeight);
+    }
 
+    private void dfsChildren(long mask, int depth, int count, int weight, long stats) {
+        int d = depth * S;
         for (int p = 0; p < branchCount; p++) {
             long bit = 1L << p;
             if ((mask & bit) != 0 || (mask & dupPred[p]) != dupPred[p]) {
@@ -852,12 +867,14 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             }
             statsPkStack[depth + 1] = newStats;
             needPkStack[depth + 1] = newNeed;
-            int nd = d + S;
-            int[] b = bonRef[branchItem[p]];
-            for (int s = 0; s < S; s++) {
-                remPosStack[nd + s] = remPosStack[d + s] - Math.max(b[s], 0);
+            if (branchCount > 10) {
+                int nd = d + S;
+                int[] b = bonRef[branchItem[p]];
+                for (int s = 0; s < S; s++) {
+                    remPosStack[nd + s] = remPosStack[d + s] - Math.max(b[s], 0);
+                }
+                posScoreStack[depth + 1] = posScoreStack[depth] - Math.max(bScore[p], 0);
             }
-            posScoreStack[depth + 1] = posScoreStack[depth] - Math.max(bScore[p], 0);
             int savedClosure = closureSize;
             int added = runClosure(depth + 1);
             int addedWeight = bScore[p] + closureScoreFrom(savedClosure);

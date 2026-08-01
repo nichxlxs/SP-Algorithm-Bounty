@@ -215,7 +215,7 @@ class DifferentialFuzzTest {
 
     // -------------------------------------------------------------- execution
 
-    private static final String[] LATTICE_NAMES = {"Closure Lattice V1", "Closure Lattice V2", "Closure Lattice V3", "Closure Lattice V4"};
+    private static final String[] LATTICE_NAMES = {"Closure Lattice V1", "Closure Lattice V2", "Closure Lattice V3", "Closure Lattice V4", "Closure Lattice V5"};
 
     private static AlgorithmRegistry.Entry entry(String name) {
         return AlgorithmRegistry.registry().stream()

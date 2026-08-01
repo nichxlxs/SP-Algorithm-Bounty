@@ -7,6 +7,7 @@ import com.wynncraft.algorithms.ClosureLatticeAlgorithm;
 import com.wynncraft.algorithms.ClosureLatticeV2Algorithm;
 import com.wynncraft.algorithms.ClosureLatticeV3Algorithm;
 import com.wynncraft.algorithms.ClosureLatticeV4Algorithm;
+import com.wynncraft.algorithms.ClosureLatticeV5Algorithm;
 import com.wynncraft.algorithms.CascadeBoundChecker;
 import com.wynncraft.algorithms.GreedyAlgorithm;
 import com.wynncraft.algorithms.MyFirstAlgorithm;
@@ -64,6 +65,7 @@ public class AlgorithmRegistry {
         register(new ClosureLatticeV2Algorithm(), WynnPlayer.Builder::new);
         register(new ClosureLatticeV3Algorithm(), WynnPlayer.Builder::new);
         register(new ClosureLatticeV4Algorithm(), WynnPlayer.Builder::new);
+        register(new ClosureLatticeV5Algorithm(), WynnPlayer.Builder::new);
     }
 
     /**

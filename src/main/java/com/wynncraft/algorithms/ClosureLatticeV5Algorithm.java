@@ -17,7 +17,8 @@ import java.util.List;
  * and the iterative mask search - with this series' robustness grafts as
  * the only changes:
  *
- *  - dynamic capacity instead of a fixed 32-item bound;
+ *  - fixed 64-item working arrays (final: bounds checks fold) with scalar
+ *    delegation above, instead of a hard 32-item bound;
  *  - a node budget bounding worst-case latency, best-found still returned;
  *  - fresh visited tables only while they are provably small (m <= 16,
  *    64 KB); a budget-bounded hash set beyond, and delegation to the scalar
@@ -35,6 +36,9 @@ public class ClosureLatticeV5Algorithm implements IAlgorithm<WynnPlayer> {
     private static final SkillPoint[] SKILL_POINTS = SkillPoint.values();
     private static final int S = 5;
     private static final int UNDETERMINED_LIMIT = 24;
+    /** Fixed capacity (final arrays let the JIT fold bounds checks); larger
+     *  inputs delegate to the scalar solver, which has no cap. */
+    private static final int MAX_ITEMS = 64;
     private static final int FRESH_TABLE_LIMIT = 16;
     private static final int NODE_BUDGET = 1 << 16;
 
@@ -66,12 +70,20 @@ public class ClosureLatticeV5Algorithm implements IAlgorithm<WynnPlayer> {
         }
     }
 
-    private Vec5[] itemReq = new Vec5[0];
-    private Vec5[] itemBon = new Vec5[0];
-    private boolean[] negItem = new boolean[0];
-    private boolean[] result = new boolean[0];
-    private int[] itemIdx = new int[0];
-    private int[] stack = new int[0];
+    private final Vec5[] itemReq = newVecs(MAX_ITEMS);
+    private final Vec5[] itemBon = newVecs(MAX_ITEMS);
+    private final boolean[] negItem = new boolean[MAX_ITEMS];
+    private final boolean[] result = new boolean[MAX_ITEMS];
+    private final int[] itemIdx = new int[MAX_ITEMS];
+    private int[] stack = new int[1 << 16];
+
+    private static Vec5[] newVecs(int n) {
+        Vec5[] v = new Vec5[n];
+        for (int i = 0; i < n; i++) {
+            v[i] = new Vec5();
+        }
+        return v;
+    }
     private HashSet<Integer> visitedLarge;
     private final int[] bonusTotal = new int[S];
 
@@ -87,7 +99,9 @@ public class ClosureLatticeV5Algorithm implements IAlgorithm<WynnPlayer> {
         if (count == 0) {
             return new Result(new ArrayList<>(0), new ArrayList<>(0));
         }
-        ensureCapacity(count);
+        if (count > MAX_ITEMS) {
+            return scalar.run(player);
+        }
 
         int cur0 = player.allocated(SKILL_POINTS[0]);
         int cur1 = player.allocated(SKILL_POINTS[1]);
@@ -318,22 +332,5 @@ public class ClosureLatticeV5Algorithm implements IAlgorithm<WynnPlayer> {
         return bestCombo;
     }
 
-    private void ensureCapacity(int items) {
-        if (result.length >= items) {
-            return;
-        }
-        int cap = Math.max(items, result.length * 2 + 8);
-        Vec5[] nr = new Vec5[cap];
-        Vec5[] nb = new Vec5[cap];
-        for (int i = 0; i < cap; i++) {
-            nr[i] = new Vec5();
-            nb[i] = new Vec5();
-        }
-        itemReq = nr;
-        itemBon = nb;
-        negItem = new boolean[cap];
-        result = new boolean[cap];
-        itemIdx = new int[cap];
-    }
 
 }

@@ -113,11 +113,11 @@ public class ClosureLatticeV5Algorithm implements IAlgorithm<WynnPlayer> {
         int cur2 = base2;
         int cur3 = base3;
         int cur4 = base4;
-        int min0 = 0;
-        int min1 = 0;
-        int min2 = 0;
-        int min3 = 0;
-        int min4 = 0;
+        int g0 = cur0;
+        int g1 = cur1;
+        int g2 = cur2;
+        int g3 = cur3;
+        int g4 = cur4;
 
         for (int i = 0; i < count; i++) {
             IEquipment item = equipment.get(i);
@@ -135,11 +135,11 @@ public class ClosureLatticeV5Algorithm implements IAlgorithm<WynnPlayer> {
             boolean neg = bv.s0 < 0 || bv.s1 < 0 || bv.s2 < 0 || bv.s3 < 0 || bv.s4 < 0;
             negItem[i] = neg;
             if (neg) {
-                min0 += Math.min(bv.s0, 0);
-                min1 += Math.min(bv.s1, 0);
-                min2 += Math.min(bv.s2, 0);
-                min3 += Math.min(bv.s3, 0);
-                min4 += Math.min(bv.s4, 0);
+                g0 += Math.min(bv.s0, 0);
+                g1 += Math.min(bv.s1, 0);
+                g2 += Math.min(bv.s2, 0);
+                g3 += Math.min(bv.s3, 0);
+                g4 += Math.min(bv.s4, 0);
             }
         }
 
@@ -152,9 +152,9 @@ public class ClosureLatticeV5Algorithm implements IAlgorithm<WynnPlayer> {
                     continue;
                 }
                 Vec5 r = itemReq[i];
-                if ((r.s0 > 0 && cur0 + min0 < r.s0) || (r.s1 > 0 && cur1 + min1 < r.s1)
-                    || (r.s2 > 0 && cur2 + min2 < r.s2) || (r.s3 > 0 && cur3 + min3 < r.s3)
-                    || (r.s4 > 0 && cur4 + min4 < r.s4)) {
+                if ((r.s0 > 0 && g0 < r.s0) || (r.s1 > 0 && g1 < r.s1)
+                    || (r.s2 > 0 && g2 < r.s2) || (r.s3 > 0 && g3 < r.s3)
+                    || (r.s4 > 0 && g4 < r.s4)) {
                     continue;
                 }
                 Vec5 b = itemBon[i];
@@ -163,6 +163,11 @@ public class ClosureLatticeV5Algorithm implements IAlgorithm<WynnPlayer> {
                 cur2 += b.s2;
                 cur3 += b.s3;
                 cur4 += b.s4;
+                g0 += b.s0;
+                g1 += b.s1;
+                g2 += b.s2;
+                g3 += b.s3;
+                g4 += b.s4;
                 result[i] = true;
                 added = true;
             }
@@ -204,17 +209,25 @@ public class ClosureLatticeV5Algorithm implements IAlgorithm<WynnPlayer> {
 
         // The greedy/search stats already hold base + every valid bonus; the
         // modify vector is their difference - no item is ever re-read.
-        List<IEquipment> validList = new ArrayList<>(count);
-        List<IEquipment> invalidList = new ArrayList<>(count);
+        int validCount = 0;
+        for (int i = 0; i < count; i++) {
+            if (result[i]) {
+                validCount++;
+            }
+        }
+        IEquipment[] validItems = new IEquipment[validCount];
+        IEquipment[] invalidItems = new IEquipment[count - validCount];
+        int vi = 0;
+        int ii = 0;
         for (int i = 0; i < count; i++) {
             IEquipment item = equipment.get(i);
             if (result[i]) {
-                validList.add(item);
+                validItems[vi++] = item;
             } else {
-                invalidList.add(item);
+                invalidItems[ii++] = item;
             }
         }
-        if (!validList.isEmpty()) {
+        if (validCount > 0) {
             bonusTotal[0] = cur0 - base0;
             bonusTotal[1] = cur1 - base1;
             bonusTotal[2] = cur2 - base2;
@@ -222,7 +235,7 @@ public class ClosureLatticeV5Algorithm implements IAlgorithm<WynnPlayer> {
             bonusTotal[4] = cur4 - base4;
             player.modify(bonusTotal, true);
         }
-        return new Result(validList, invalidList);
+        return new Result(java.util.Arrays.asList(validItems), java.util.Arrays.asList(invalidItems));
     }
 
     private int search(int m, int base0, int base1, int base2, int base3, int base4) {

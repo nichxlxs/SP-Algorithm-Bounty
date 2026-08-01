@@ -59,6 +59,7 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
     private int[][] fBon = new int[0][];
     private int[][] pReq = new int[0][];
     private int[][] pBon = new int[0][];
+    private int[] pendingBranch = new int[0];
     private final int[] extBase = new int[S];
     private final int[] base = new int[S];
     private final int[] bonusTotal = new int[S];
@@ -147,13 +148,23 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             base[s] = player.allocated(SKILL_POINTS[s]);
         }
 
-        // Pass 0: negative-bonus pre-scan (one precomputed-flag call per item).
-        boolean anyNeg = false;
+        // Pass 0: negative-bonus pre-scan (one precomputed-flag call per item);
+        // reducible lanes are collected here from the few negative items.
+        int riskyMask = 0;
         for (int i = 0; i < count; i++) {
-            boolean neg = equipment.get(i).hasNegativeBonus();
+            IEquipment item = equipment.get(i);
+            boolean neg = item.hasNegativeBonus();
             negFlag[i] = neg;
-            anyNeg |= neg;
+            if (neg) {
+                int[] b = item.bonuses();
+                for (int s = 0; s < S; s++) {
+                    if (b[s] < 0) {
+                        riskyMask |= 1 << s;
+                    }
+                }
+            }
         }
+        boolean anyNeg = riskyMask != 0;
 
         if (!anyNeg) {
             // No item reduces any skill: feasibility is a monotone closure.
@@ -213,19 +224,26 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             return buildResult(equipment, count, player);
         }
 
-        // Pass 1: extraction + survivor collection in a single sweep. Extracted
-        // items (no requirements, no negative bonus - unconditionally optimal)
-        // cost a handful of scalar adds; every other cost, including the
-        // domain-guard arithmetic, is confined to the few survivors.
-        int riskyMask = 0;
+        // Pass 1: extraction, classification, and the domain guard in a single
+        // sweep (riskyMask is already known from pass 0). Extracted items (no
+        // requirements, no negative bonus - unconditionally optimal) cost a
+        // handful of scalar adds; everything else is survivor-only.
         int ext0 = base[0];
         int ext1 = base[1];
         int ext2 = base[2];
         int ext3 = base[3];
         int ext4 = base[4];
-        int survivors = 0;
+        int maxReq = 0;
+        int maxPosBonus = 0;
+        long abs0 = 0;
+        long abs1 = 0;
+        long abs2 = 0;
+        long abs3 = 0;
+        long abs4 = 0;
         extractedCount = 0;
         extractedScore = 0;
+        forcedCount = 0;
+        branchCount = 0;
         for (int i = 0; i < count; i++) {
             IEquipment item = equipment.get(i);
             int[] r = item.requirements();
@@ -244,34 +262,6 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             }
             valid[i] = false;
             bonRef[i] = b;
-            wlIdx[survivors] = i;
-            wlReq[survivors] = r;
-            survivors++;
-            if (neg) {
-                for (int s = 0; s < S; s++) {
-                    if (b[s] < 0) {
-                        riskyMask |= 1 << s;
-                    }
-                }
-            }
-        }
-
-        // Pass 2: classification, packing and the domain guard - survivors only.
-        // Cumulative lane bounds: |base| plus extracted positives (ext - base)
-        // plus survivor |bonus| sums.
-        int maxReq = 0;
-        int maxPosBonus = 0;
-        long abs0 = Math.abs(base[0]) + (ext0 - base[0]);
-        long abs1 = Math.abs(base[1]) + (ext1 - base[1]);
-        long abs2 = Math.abs(base[2]) + (ext2 - base[2]);
-        long abs3 = Math.abs(base[3]) + (ext3 - base[3]);
-        long abs4 = Math.abs(base[4]) + (ext4 - base[4]);
-        forcedCount = 0;
-        branchCount = 0;
-        for (int k = 0; k < survivors; k++) {
-            int i = wlIdx[k];
-            int[] r = wlReq[k];
-            int[] b = bonRef[i];
             abs0 += Math.abs(b[0]);
             abs1 += Math.abs(b[1]);
             abs2 += Math.abs(b[2]);
@@ -292,7 +282,6 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             if (reqMax > maxReq) {
                 maxReq = reqMax;
             }
-            boolean neg = negFlag[i];
             int sc = b[0] + b[1] + b[2] + b[3] + b[4];
             if (!neg && (reqLanes & riskyMask) == 0) {
                 int f = forcedCount++;
@@ -317,6 +306,12 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             }
         }
 
+        // Cumulative lane bounds: |base| + extracted positives + survivor |bonus| sums.
+        abs0 += Math.abs(base[0]) + (ext0 - base[0]);
+        abs1 += Math.abs(base[1]) + (ext1 - base[1]);
+        abs2 += Math.abs(base[2]) + (ext2 - base[2]);
+        abs3 += Math.abs(base[3]) + (ext3 - base[3]);
+        abs4 += Math.abs(base[4]) + (ext4 - base[4]);
         long maxAbs = Math.max(Math.max(abs0, abs1), Math.max(Math.max(abs2, abs3), abs4));
         if (maxAbs > 1023 || maxReq + maxPosBonus > 1023 || maxReq > 1023
             || branchCount > EXACT_LIMIT) {
@@ -388,6 +383,7 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
         fBon = new int[cap][];
         pReq = new int[cap][];
         pBon = new int[cap][];
+        pendingBranch = new int[cap];
         equippedForced = new boolean[cap];
         closureLog = new int[cap];
         statsPkStack = new long[cap + 2];
@@ -421,6 +417,10 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
             int s2 = extBase[2];
             int s3 = extBase[3];
             int s4 = extBase[4];
+            int pbCount = branchCount;
+            for (int p = 0; p < branchCount; p++) {
+                pendingBranch[p] = p;
+            }
             int n0 = Integer.MIN_VALUE;
             int n1 = Integer.MIN_VALUE;
             int n2 = Integer.MIN_VALUE;
@@ -458,11 +458,9 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
                     slot--;
                     progress = true;
                 }
-                // Invariant-checked branch adds.
-                for (int p = 0; p < branchCount; p++) {
-                    if ((greedyMask & (1L << p)) != 0) {
-                        continue;
-                    }
+                // Invariant-checked branch adds over a compacted worklist.
+                for (int slot = 0; slot < pbCount; slot++) {
+                    int p = pendingBranch[slot];
                     int[] r = pReq[p];
                     if ((r[0] > 0 && s0 < r[0]) || (r[1] > 0 && s1 < r[1])
                         || (r[2] > 0 && s2 < r[2]) || (r[3] > 0 && s3 < r[3])
@@ -509,6 +507,8 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
                     n3 = m3;
                     n4 = m4;
                     greedyMask |= 1L << p;
+                    pendingBranch[slot] = pendingBranch[--pbCount];
+                    slot--;
                     count++;
                     progress = true;
                 }

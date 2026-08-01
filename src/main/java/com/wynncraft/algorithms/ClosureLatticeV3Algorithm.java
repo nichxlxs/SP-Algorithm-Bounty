@@ -160,20 +160,17 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
         int s3 = base[3];
         int s4 = base[4];
         int wl = 0;
-        for (int i = 0; i < count; i++) {
+        int scanned = 0;
+        while (scanned < count) {
+            int i = scanned;
             IEquipment item = equipment.get(i);
             boolean neg = item.hasNegativeBonus();
             negFlag[i] = neg;
             if (neg) {
                 firstNeg = i;
-                int[] b = item.bonuses();
-                for (int s = 0; s < S; s++) {
-                    if (b[s] < 0) {
-                        riskyMask |= 1 << s;
-                    }
-                }
-                continue;
+                break;
             }
+            scanned++;
             int[] r = item.requirements();
             if ((r[0] <= 0 || s0 >= r[0]) && (r[1] <= 0 || s1 >= r[1])
                 && (r[2] <= 0 || s2 >= r[2]) && (r[3] <= 0 || s3 >= r[3])
@@ -190,6 +187,23 @@ public class ClosureLatticeV3Algorithm implements IAlgorithm<WynnPlayer> {
                 wlIdx[wl] = i;
                 wlReq[wl] = r;
                 wl++;
+            }
+        }
+        if (firstNeg >= 0) {
+            // Negatives exist: finish with a flags-only scan; the optimistic
+            // work done so far is discarded and the general path re-derives it.
+            for (int i = firstNeg; i < count; i++) {
+                IEquipment item = equipment.get(i);
+                boolean neg = item.hasNegativeBonus();
+                negFlag[i] = neg;
+                if (neg) {
+                    int[] b = item.bonuses();
+                    for (int s = 0; s < S; s++) {
+                        if (b[s] < 0) {
+                            riskyMask |= 1 << s;
+                        }
+                    }
+                }
             }
         }
         if (firstNeg < 0) {

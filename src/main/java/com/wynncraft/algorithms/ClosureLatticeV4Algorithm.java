@@ -234,10 +234,27 @@ public class ClosureLatticeV4Algorithm implements IAlgorithm<WynnPlayer> {
      */
     private int search(int m, int base0, int base1, int base2, int base3, int base4) {
         int full = (1 << m) - 1;
-        prepareVisited(m);
+        // Small mask spaces use a freshly allocated byte-indexed table: a
+        // young-gen allocation the JVM zeroes lazily, cheaper per access than
+        // a reused bitset's shift-and-mask (and cheaper per call than filling
+        // one). Larger spaces use the reused bitset / hash set.
+        boolean[] seen = m <= 13 ? new boolean[1 << m] : null;
+        if (seen == null) {
+            prepareVisited(m);
+        } else {
+            int maxMasks = 1 << m;
+            int stackBound = (int) Math.min((long) maxMasks, (long) NODE_BUDGET * m + m + 1L);
+            if (stack.length < stackBound) {
+                stack = new int[stackBound];
+            }
+        }
         int stackTop = 0;
         stack[stackTop++] = 0;
-        markVisited(0);
+        if (seen != null) {
+            seen[0] = true;
+        } else {
+            markVisited(0);
+        }
 
         int bestCombo = 0;
         int bestCount = 0;
@@ -274,10 +291,17 @@ public class ClosureLatticeV4Algorithm implements IAlgorithm<WynnPlayer> {
                     continue;
                 }
                 int newCombo = combo | bit;
-                if (isVisited(newCombo)) {
-                    continue;
+                if (seen != null) {
+                    if (seen[newCombo]) {
+                        continue;
+                    }
+                    seen[newCombo] = true;
+                } else {
+                    if (isVisited(newCombo)) {
+                        continue;
+                    }
+                    markVisited(newCombo);
                 }
-                markVisited(newCombo);
 
                 int off = slot * S;
                 if ((req[off] > 0 && c0 < req[off])

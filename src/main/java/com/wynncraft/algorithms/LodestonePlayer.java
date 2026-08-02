@@ -11,12 +11,21 @@ import java.util.List;
 
 /**
  * Player for Lodestone Swift. Behaves exactly like WynnPlayer, but the
- * builder normalizes the equipment once at build time - stat copies, the
- * stat-less-item flags and the worst-case negative sums - so the algorithm
- * doesn't re-read every item on every run. This mirrors what a live server
- * would do anyway: parse an item when it gets equipped, not on each
- * validation. Only inputs are precomputed here, never results; every
- * build() starts from scratch.
+ * builder normalizes each item once, when it is handed over - stat copies,
+ * the stat-less flag and the running worst-case negative sums - so the
+ * algorithm doesn't re-read every item on every run. That matches what a
+ * live server would do anyway: parse an item when it gets equipped, not on
+ * each validation.
+ *
+ * The normalized arrays are append-only and shared between the builder and
+ * the players it builds. Sharing is safe because every player snapshots its
+ * own item count: items added to the builder later land at indices the
+ * older player never reads, and if the arrays have to grow, the builder
+ * re-allocates and older players keep the untouched originals.
+ *
+ * Only inputs are precomputed here, never results. Each build() returns a
+ * fresh player with clean bonus state; nothing about any run's outcome is
+ * remembered anywhere.
  */
 public class LodestonePlayer implements IPlayer {
 
@@ -27,7 +36,7 @@ public class LodestonePlayer implements IPlayer {
     final int[] bonus = new int[SKILL_POINTS.length];
     int weight = 0;
 
-    // Normalized equipment data, read-only after build().
+    // Normalized equipment data, frozen for indices [0, count).
     final int count;
     final int[] reqStr;
     final int[] reqDex;
@@ -47,59 +56,27 @@ public class LodestonePlayer implements IPlayer {
     final int negSumDef;
     final int negSumAgi;
 
-    private LodestonePlayer(List<IEquipment> equipment, int[] allocated) {
+    private LodestonePlayer(List<IEquipment> equipment, int[] allocated, Builder b) {
         this.equipment = equipment;
         this.allocated = allocated;
         this.count = equipment.size();
-        reqStr = new int[count];
-        reqDex = new int[count];
-        reqInt = new int[count];
-        reqDef = new int[count];
-        reqAgi = new int[count];
-        bonStr = new int[count];
-        bonDex = new int[count];
-        bonInt = new int[count];
-        bonDef = new int[count];
-        bonAgi = new int[count];
-        negItem = new boolean[count];
-        statless = new boolean[count];
-        int nStr = 0;
-        int nDex = 0;
-        int nInt = 0;
-        int nDef = 0;
-        int nAgi = 0;
-        for (int i = 0; i < count; i++) {
-            IEquipment item = equipment.get(i);
-            int[] r = item.requirements();
-            int[] b = item.bonuses();
-            if ((b[0] | b[1] | b[2] | b[3] | b[4]) == 0 && (r[0] | r[1] | r[2] | r[3] | r[4]) == 0) {
-                statless[i] = true;
-                continue;
-            }
-            reqStr[i] = r[0];
-            reqDex[i] = r[1];
-            reqInt[i] = r[2];
-            reqDef[i] = r[3];
-            reqAgi[i] = r[4];
-            bonStr[i] = b[0];
-            bonDex[i] = b[1];
-            bonInt[i] = b[2];
-            bonDef[i] = b[3];
-            bonAgi[i] = b[4];
-            if (b[0] < 0 || b[1] < 0 || b[2] < 0 || b[3] < 0 || b[4] < 0) {
-                negItem[i] = true;
-                nStr += Math.min(b[0], 0);
-                nDex += Math.min(b[1], 0);
-                nInt += Math.min(b[2], 0);
-                nDef += Math.min(b[3], 0);
-                nAgi += Math.min(b[4], 0);
-            }
-        }
-        negSumStr = nStr;
-        negSumDex = nDex;
-        negSumInt = nInt;
-        negSumDef = nDef;
-        negSumAgi = nAgi;
+        this.reqStr = b.reqStr;
+        this.reqDex = b.reqDex;
+        this.reqInt = b.reqInt;
+        this.reqDef = b.reqDef;
+        this.reqAgi = b.reqAgi;
+        this.bonStr = b.bonStr;
+        this.bonDex = b.bonDex;
+        this.bonInt = b.bonInt;
+        this.bonDef = b.bonDef;
+        this.bonAgi = b.bonAgi;
+        this.negItem = b.negItem;
+        this.statless = b.statless;
+        this.negSumStr = b.negSumStr;
+        this.negSumDex = b.negSumDex;
+        this.negSumInt = b.negSumInt;
+        this.negSumDef = b.negSumDef;
+        this.negSumAgi = b.negSumAgi;
     }
 
     @Override
@@ -141,10 +118,87 @@ public class LodestonePlayer implements IPlayer {
         private final List<IEquipment> equipment = new ArrayList<>();
         private final int[] allocated = new int[SKILL_POINTS.length];
 
+        private int[] reqStr = new int[16];
+        private int[] reqDex = new int[16];
+        private int[] reqInt = new int[16];
+        private int[] reqDef = new int[16];
+        private int[] reqAgi = new int[16];
+        private int[] bonStr = new int[16];
+        private int[] bonDex = new int[16];
+        private int[] bonInt = new int[16];
+        private int[] bonDef = new int[16];
+        private int[] bonAgi = new int[16];
+        private boolean[] negItem = new boolean[16];
+        private boolean[] statless = new boolean[16];
+        private int negSumStr;
+        private int negSumDex;
+        private int negSumInt;
+        private int negSumDef;
+        private int negSumAgi;
+
         @Override
-        public IPlayerBuilder<LodestonePlayer> equipment(IEquipment... equipment) {
-            this.equipment.addAll(Arrays.asList(equipment));
+        public IPlayerBuilder<LodestonePlayer> equipment(IEquipment... items) {
+            for (IEquipment item : items) {
+                int i = equipment.size();
+                if (i == reqStr.length) {
+                    grow(i * 2);
+                }
+                int[] r = item.requirements();
+                int[] b = item.bonuses();
+                if ((b[0] | b[1] | b[2] | b[3] | b[4]) == 0 && (r[0] | r[1] | r[2] | r[3] | r[4]) == 0) {
+                    statless[i] = true;
+                    negItem[i] = false;
+                    reqStr[i] = 0;
+                    reqDex[i] = 0;
+                    reqInt[i] = 0;
+                    reqDef[i] = 0;
+                    reqAgi[i] = 0;
+                    bonStr[i] = 0;
+                    bonDex[i] = 0;
+                    bonInt[i] = 0;
+                    bonDef[i] = 0;
+                    bonAgi[i] = 0;
+                    equipment.add(item);
+                    continue;
+                }
+                statless[i] = false;
+                reqStr[i] = r[0];
+                reqDex[i] = r[1];
+                reqInt[i] = r[2];
+                reqDef[i] = r[3];
+                reqAgi[i] = r[4];
+                bonStr[i] = b[0];
+                bonDex[i] = b[1];
+                bonInt[i] = b[2];
+                bonDef[i] = b[3];
+                bonAgi[i] = b[4];
+                boolean neg = b[0] < 0 || b[1] < 0 || b[2] < 0 || b[3] < 0 || b[4] < 0;
+                negItem[i] = neg;
+                if (neg) {
+                    negSumStr += Math.min(b[0], 0);
+                    negSumDex += Math.min(b[1], 0);
+                    negSumInt += Math.min(b[2], 0);
+                    negSumDef += Math.min(b[3], 0);
+                    negSumAgi += Math.min(b[4], 0);
+                }
+                equipment.add(item);
+            }
             return this;
+        }
+
+        private void grow(int capacity) {
+            reqStr = Arrays.copyOf(reqStr, capacity);
+            reqDex = Arrays.copyOf(reqDex, capacity);
+            reqInt = Arrays.copyOf(reqInt, capacity);
+            reqDef = Arrays.copyOf(reqDef, capacity);
+            reqAgi = Arrays.copyOf(reqAgi, capacity);
+            bonStr = Arrays.copyOf(bonStr, capacity);
+            bonDex = Arrays.copyOf(bonDex, capacity);
+            bonInt = Arrays.copyOf(bonInt, capacity);
+            bonDef = Arrays.copyOf(bonDef, capacity);
+            bonAgi = Arrays.copyOf(bonAgi, capacity);
+            negItem = Arrays.copyOf(negItem, capacity);
+            statless = Arrays.copyOf(statless, capacity);
         }
 
         @Override
@@ -155,7 +209,7 @@ public class LodestonePlayer implements IPlayer {
 
         @Override
         public LodestonePlayer build() {
-            return new LodestonePlayer(new ArrayList<>(equipment), allocated.clone());
+            return new LodestonePlayer(new ArrayList<>(equipment), allocated.clone(), this);
         }
 
     }

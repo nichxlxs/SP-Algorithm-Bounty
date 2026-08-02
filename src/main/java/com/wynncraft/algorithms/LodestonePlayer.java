@@ -5,8 +5,7 @@ import com.wynncraft.core.interfaces.IPlayer;
 import com.wynncraft.core.interfaces.IPlayerBuilder;
 import com.wynncraft.enums.SkillPoint;
 
-import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.AbstractList;
 import java.util.List;
 
 /**
@@ -17,11 +16,12 @@ import java.util.List;
  * live server would do anyway: parse an item when it gets equipped, not on
  * each validation.
  *
- * The normalized arrays are append-only and shared between the builder and
- * the players it builds. Sharing is safe because every player snapshots its
- * own item count: items added to the builder later land at indices the
- * older player never reads, and if the arrays have to grow, the builder
- * re-allocates and older players keep the untouched originals.
+ * The item array and the normalized arrays are append-only and shared
+ * between the builder and the players it builds. Sharing is safe because
+ * every player snapshots its own item count: items added to the builder
+ * later land at indices the older player never reads, and if the arrays
+ * have to grow, the builder re-allocates and older players keep the
+ * untouched originals.
  *
  * Only inputs are precomputed here, never results. Each build() returns a
  * fresh player with clean bonus state; nothing about any run's outcome is
@@ -31,13 +31,14 @@ public class LodestonePlayer implements IPlayer {
 
     private static final SkillPoint[] SKILL_POINTS = SkillPoint.values();
 
-    final List<IEquipment> equipment;
     final int[] allocated;
     final int[] bonus = new int[SKILL_POINTS.length];
     int weight = 0;
 
-    // Normalized equipment data, frozen for indices [0, count).
+    // Equipment and normalized data, frozen for indices [0, count).
     final int count;
+    final IEquipment[] items;
+    private final ItemsView equipmentView;
     final int[] reqStr;
     final int[] reqDex;
     final int[] reqInt;
@@ -56,10 +57,11 @@ public class LodestonePlayer implements IPlayer {
     final int negSumDef;
     final int negSumAgi;
 
-    private LodestonePlayer(List<IEquipment> equipment, int[] allocated, Builder b) {
-        this.equipment = equipment;
-        this.allocated = allocated;
-        this.count = equipment.size();
+    private LodestonePlayer(Builder b) {
+        this.allocated = b.allocated.clone();
+        this.count = b.size;
+        this.items = b.items;
+        this.equipmentView = new ItemsView(b.items, b.size);
         this.reqStr = b.reqStr;
         this.reqDex = b.reqDex;
         this.reqInt = b.reqInt;
@@ -81,7 +83,7 @@ public class LodestonePlayer implements IPlayer {
 
     @Override
     public List<IEquipment> equipment() {
-        return equipment;
+        return equipmentView;
     }
 
     @Override
@@ -108,16 +110,60 @@ public class LodestonePlayer implements IPlayer {
         }
     }
 
+    /** Same effect as modify(new int[]{...}, true), without the array. */
+    void addBonus(int str, int dex, int intel, int def, int agi) {
+        bonus[0] += str;
+        bonus[1] += dex;
+        bonus[2] += intel;
+        bonus[3] += def;
+        bonus[4] += agi;
+        weight += str + dex + intel + def + agi;
+    }
+
     @Override
     public void reset() {
-        modify(bonus.clone(), false);
+        // Weight only ever accumulates the same values as the bonuses, so
+        // resetting is plain zeroing - no need to replay them negated.
+        bonus[0] = 0;
+        bonus[1] = 0;
+        bonus[2] = 0;
+        bonus[3] = 0;
+        bonus[4] = 0;
+        weight = 0;
+    }
+
+    /** Read-only, count-bounded view over the shared item array. */
+    private static final class ItemsView extends AbstractList<IEquipment> {
+
+        private final IEquipment[] items;
+        private final int size;
+
+        ItemsView(IEquipment[] items, int size) {
+            this.items = items;
+            this.size = size;
+        }
+
+        @Override
+        public IEquipment get(int index) {
+            if (index >= size) {
+                throw new IndexOutOfBoundsException("Index: " + index + ", Size: " + size);
+            }
+            return items[index];
+        }
+
+        @Override
+        public int size() {
+            return size;
+        }
+
     }
 
     public static class Builder implements IPlayerBuilder<LodestonePlayer> {
 
-        private final List<IEquipment> equipment = new ArrayList<>();
         private final int[] allocated = new int[SKILL_POINTS.length];
 
+        private int size = 0;
+        private IEquipment[] items = new IEquipment[16];
         private int[] reqStr = new int[16];
         private int[] reqDex = new int[16];
         private int[] reqInt = new int[16];
@@ -137,19 +183,20 @@ public class LodestonePlayer implements IPlayer {
         private int negSumAgi;
 
         @Override
-        public IPlayerBuilder<LodestonePlayer> equipment(IEquipment... items) {
-            for (IEquipment item : items) {
-                int i = equipment.size();
-                if (i == reqStr.length) {
+        public IPlayerBuilder<LodestonePlayer> equipment(IEquipment... added) {
+            for (IEquipment item : added) {
+                int i = size;
+                if (i == items.length) {
                     grow(i * 2);
                 }
                 int[] r = item.requirements();
                 int[] b = item.bonuses();
+                items[i] = item;
                 if ((b[0] | b[1] | b[2] | b[3] | b[4]) == 0 && (r[0] | r[1] | r[2] | r[3] | r[4]) == 0) {
                     // Slot i is written at most once per builder and the
                     // arrays start (and grow) zeroed, so the flag is enough.
                     statless[i] = true;
-                    equipment.add(item);
+                    size = i + 1;
                     continue;
                 }
                 reqStr[i] = r[0];
@@ -171,24 +218,25 @@ public class LodestonePlayer implements IPlayer {
                     negSumDef += Math.min(b[3], 0);
                     negSumAgi += Math.min(b[4], 0);
                 }
-                equipment.add(item);
+                size = i + 1;
             }
             return this;
         }
 
         private void grow(int capacity) {
-            reqStr = Arrays.copyOf(reqStr, capacity);
-            reqDex = Arrays.copyOf(reqDex, capacity);
-            reqInt = Arrays.copyOf(reqInt, capacity);
-            reqDef = Arrays.copyOf(reqDef, capacity);
-            reqAgi = Arrays.copyOf(reqAgi, capacity);
-            bonStr = Arrays.copyOf(bonStr, capacity);
-            bonDex = Arrays.copyOf(bonDex, capacity);
-            bonInt = Arrays.copyOf(bonInt, capacity);
-            bonDef = Arrays.copyOf(bonDef, capacity);
-            bonAgi = Arrays.copyOf(bonAgi, capacity);
-            negItem = Arrays.copyOf(negItem, capacity);
-            statless = Arrays.copyOf(statless, capacity);
+            items = java.util.Arrays.copyOf(items, capacity);
+            reqStr = java.util.Arrays.copyOf(reqStr, capacity);
+            reqDex = java.util.Arrays.copyOf(reqDex, capacity);
+            reqInt = java.util.Arrays.copyOf(reqInt, capacity);
+            reqDef = java.util.Arrays.copyOf(reqDef, capacity);
+            reqAgi = java.util.Arrays.copyOf(reqAgi, capacity);
+            bonStr = java.util.Arrays.copyOf(bonStr, capacity);
+            bonDex = java.util.Arrays.copyOf(bonDex, capacity);
+            bonInt = java.util.Arrays.copyOf(bonInt, capacity);
+            bonDef = java.util.Arrays.copyOf(bonDef, capacity);
+            bonAgi = java.util.Arrays.copyOf(bonAgi, capacity);
+            negItem = java.util.Arrays.copyOf(negItem, capacity);
+            statless = java.util.Arrays.copyOf(statless, capacity);
         }
 
         @Override
@@ -199,7 +247,7 @@ public class LodestonePlayer implements IPlayer {
 
         @Override
         public LodestonePlayer build() {
-            return new LodestonePlayer(new ArrayList<>(equipment), allocated.clone(), this);
+            return new LodestonePlayer(this);
         }
 
     }

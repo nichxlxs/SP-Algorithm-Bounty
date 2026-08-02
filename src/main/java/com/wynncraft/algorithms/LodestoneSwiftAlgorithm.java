@@ -50,7 +50,6 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
     private final boolean[] result = new boolean[MAX_ITEMS];
     private final int[] itemIdxs = new int[MAX_ITEMS];
     private final int[] pendingIdxs = new int[MAX_ITEMS];
-    private final int[] modifyTotals = new int[5];
     private int[] comboStack = new int[1 << 16];
     private HashSet<Integer> seenLarge;
 
@@ -64,7 +63,6 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
 
     @Override
     public Result run(LodestonePlayer player) {
-        List<IEquipment> equipment = player.equipment();
         int count = player.count;
         if (count == 0) {
             return new Result(new ArrayList<>(0), new ArrayList<>(0));
@@ -79,20 +77,22 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
         int baseDef = player.allocated[3];
         int baseAgi = player.allocated[4];
 
-        // cur* = stats with everything valid so far applied. worst* = same,
-        // but assuming every negative bonus in the build already hit us; the
-        // player precomputed those sums, so worst* is complete before the
-        // first requirement check.
-        int curStr = baseStr;
-        int curDex = baseDex;
-        int curInt = baseInt;
-        int curDef = baseDef;
-        int curAgi = baseAgi;
-        int worstStr = baseStr + player.negSumStr;
-        int worstDex = baseDex + player.negSumDex;
-        int worstInt = baseInt + player.negSumInt;
-        int worstDef = baseDef + player.negSumDef;
-        int worstAgi = baseAgi + player.negSumAgi;
+        int negStr = player.negSumStr;
+        int negDex = player.negSumDex;
+        int negInt = player.negSumInt;
+        int negDef = player.negSumDef;
+        int negAgi = player.negSumAgi;
+
+        // worst* = stats with everything valid so far applied, assuming every
+        // negative bonus in the build already hit us. The greedy phase only
+        // ever accepts items with no downsides, so the gap between worst and
+        // the real stats stays fixed at the negative sums - one set of
+        // accumulators is enough, the real stats fall out at the end.
+        int worstStr = baseStr + negStr;
+        int worstDex = baseDex + negDex;
+        int worstInt = baseInt + negInt;
+        int worstDef = baseDef + negDef;
+        int worstAgi = baseAgi + negAgi;
 
         boolean[] statless = player.statless;
         boolean[] negItem = player.negItem;
@@ -123,21 +123,11 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
                 pendingIdxs[pending++] = i;
                 continue;
             }
-            int bStr = player.bonStr[i];
-            int bDex = player.bonDex[i];
-            int bInt = player.bonInt[i];
-            int bDef = player.bonDef[i];
-            int bAgi = player.bonAgi[i];
-            curStr += bStr;
-            curDex += bDex;
-            curInt += bInt;
-            curDef += bDef;
-            curAgi += bAgi;
-            worstStr += bStr;
-            worstDex += bDex;
-            worstInt += bInt;
-            worstDef += bDef;
-            worstAgi += bAgi;
+            worstStr += player.bonStr[i];
+            worstDex += player.bonDex[i];
+            worstInt += player.bonInt[i];
+            worstDef += player.bonDef[i];
+            worstAgi += player.bonAgi[i];
             result[i] = true;
             added = true;
         }
@@ -150,26 +140,22 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
                     || (reqAgi[i] > 0 && worstAgi < reqAgi[i])) {
                     continue;
                 }
-                int bStr = player.bonStr[i];
-                int bDex = player.bonDex[i];
-                int bInt = player.bonInt[i];
-                int bDef = player.bonDef[i];
-                int bAgi = player.bonAgi[i];
-                curStr += bStr;
-                curDex += bDex;
-                curInt += bInt;
-                curDef += bDef;
-                curAgi += bAgi;
-                worstStr += bStr;
-                worstDex += bDex;
-                worstInt += bInt;
-                worstDef += bDef;
-                worstAgi += bAgi;
+                worstStr += player.bonStr[i];
+                worstDex += player.bonDex[i];
+                worstInt += player.bonInt[i];
+                worstDef += player.bonDef[i];
+                worstAgi += player.bonAgi[i];
                 result[i] = true;
                 pendingIdxs[k--] = pendingIdxs[--pending];
                 added = true;
             }
         }
+
+        int curStr = worstStr - negStr;
+        int curDex = worstDex - negDex;
+        int curInt = worstInt - negInt;
+        int curDef = worstDef - negDef;
+        int curAgi = worstAgi - negAgi;
 
         // Copy the undecided leftovers into our own scratch buffers so the
         // search never touches player-owned data.
@@ -214,33 +200,34 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
             }
         }
 
-        // cur* already equals base + every valid bonus, so the player update
-        // is just the difference. No need to touch the items again.
         int validCount = 0;
         for (int i = 0; i < count; i++) {
             if (result[i]) {
                 validCount++;
             }
         }
+        // cur* already equals base + every valid bonus, so the player update
+        // is just the difference. No need to touch the items again.
+        if (validCount > 0) {
+            player.addBonus(curStr - baseStr, curDex - baseDex, curInt - baseInt,
+                curDef - baseDef, curAgi - baseAgi);
+        }
+        if (validCount == count) {
+            // Everything fits - the usual case on real builds. The player's
+            // own equipment view is exactly the valid list.
+            return new Result(player.equipment(), new ArrayList<>(0));
+        }
+        IEquipment[] items = player.items;
         IEquipment[] validItems = new IEquipment[validCount];
         IEquipment[] invalidItems = new IEquipment[count - validCount];
         int v = 0;
         int inv = 0;
         for (int i = 0; i < count; i++) {
-            IEquipment item = equipment.get(i);
             if (result[i]) {
-                validItems[v++] = item;
+                validItems[v++] = items[i];
             } else {
-                invalidItems[inv++] = item;
+                invalidItems[inv++] = items[i];
             }
-        }
-        if (validCount > 0) {
-            modifyTotals[0] = curStr - baseStr;
-            modifyTotals[1] = curDex - baseDex;
-            modifyTotals[2] = curInt - baseInt;
-            modifyTotals[3] = curDef - baseDef;
-            modifyTotals[4] = curAgi - baseAgi;
-            player.modify(modifyTotals, true);
         }
         return new Result(Arrays.asList(validItems), Arrays.asList(invalidItems));
     }

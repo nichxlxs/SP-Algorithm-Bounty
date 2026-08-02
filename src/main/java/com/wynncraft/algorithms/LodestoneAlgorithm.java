@@ -111,15 +111,12 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
         int baseDef = player.allocated(SKILL_POINTS[3]);
         int baseAgi = player.allocated(SKILL_POINTS[4]);
 
-        // cur* = stats with everything valid so far applied.
-        // worst* = same, but also assuming every negative bonus in the build
-        // hits us. If an item passes its reqs against worst*, it is safe in
-        // every possible outcome.
-        int curStr = baseStr;
-        int curDex = baseDex;
-        int curInt = baseInt;
-        int curDef = baseDef;
-        int curAgi = baseAgi;
+        // worst* = stats with everything valid so far applied, assuming every
+        // negative bonus in the build hits us too. If an item passes its reqs
+        // against worst*, it is safe in every possible outcome. The greedy
+        // phase only accepts items with no downsides, so the gap between
+        // worst* and the real stats stays fixed at the negative sums - one
+        // set of accumulators is enough, the real stats fall out at the end.
         int worstStr = baseStr;
         int worstDex = baseDex;
         int worstInt = baseInt;
@@ -151,6 +148,12 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
             }
         }
 
+        int negStr = worstStr - baseStr;
+        int negDex = worstDex - baseDex;
+        int negInt = worstInt - baseInt;
+        int negDef = worstDef - baseDef;
+        int negAgi = worstAgi - baseAgi;
+
         // Step 2: keep equipping items that are safe under the worst case,
         // until a full pass adds nothing. First pass over everything; repeat
         // passes only look at what's still pending.
@@ -168,11 +171,6 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
                 continue;
             }
             Stats b = itemBonuses[i];
-            curStr += b.str;
-            curDex += b.dex;
-            curInt += b.intel;
-            curDef += b.def;
-            curAgi += b.agi;
             worstStr += b.str;
             worstDex += b.dex;
             worstInt += b.intel;
@@ -192,11 +190,6 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
                     continue;
                 }
                 Stats b = itemBonuses[i];
-                curStr += b.str;
-                curDex += b.dex;
-                curInt += b.intel;
-                curDef += b.def;
-                curAgi += b.agi;
                 worstStr += b.str;
                 worstDex += b.dex;
                 worstInt += b.intel;
@@ -207,6 +200,12 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
                 added = true;
             }
         }
+
+        int curStr = worstStr - negStr;
+        int curDex = worstDex - negDex;
+        int curInt = worstInt - negInt;
+        int curDef = worstDef - negDef;
+        int curAgi = worstAgi - negAgi;
 
         // Move the undecided leftovers to the front of the buffers so the
         // search only ever looks at slots [0, m).
@@ -243,13 +242,26 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
             }
         }
 
-        // cur* already equals base + every valid bonus, so the player update
-        // is just the difference. No need to touch the items again.
         int validCount = 0;
         for (int i = 0; i < count; i++) {
             if (result[i]) {
                 validCount++;
             }
+        }
+        // cur* already equals base + every valid bonus, so the player update
+        // is just the difference. No need to touch the items again.
+        if (validCount > 0) {
+            modifyTotals[0] = curStr - baseStr;
+            modifyTotals[1] = curDex - baseDex;
+            modifyTotals[2] = curInt - baseInt;
+            modifyTotals[3] = curDef - baseDef;
+            modifyTotals[4] = curAgi - baseAgi;
+            player.modify(modifyTotals, true);
+        }
+        if (validCount == count) {
+            // Everything fits - the usual case on real builds. The player's
+            // equipment list is exactly the valid list.
+            return new Result(equipment, new ArrayList<>(0));
         }
         IEquipment[] validItems = new IEquipment[validCount];
         IEquipment[] invalidItems = new IEquipment[count - validCount];
@@ -262,14 +274,6 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
             } else {
                 invalidItems[inv++] = item;
             }
-        }
-        if (validCount > 0) {
-            modifyTotals[0] = curStr - baseStr;
-            modifyTotals[1] = curDex - baseDex;
-            modifyTotals[2] = curInt - baseInt;
-            modifyTotals[3] = curDef - baseDef;
-            modifyTotals[4] = curAgi - baseAgi;
-            player.modify(modifyTotals, true);
         }
         return new Result(Arrays.asList(validItems), Arrays.asList(invalidItems));
     }

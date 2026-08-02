@@ -86,11 +86,12 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
     }
 
     // Working buffers, overwritten from scratch on every call. Fixed size on
-    // purpose: final arrays of constant length keep the loops tight.
+    // purpose: final arrays of constant length keep the loops tight. Validity
+    // lives in a bitmask (the fast path handles at most 64 items) so the hot
+    // loops never store into an array for it.
     private final Stats[] itemReqs = makeStats(MAX_ITEMS);
     private final Stats[] itemBonuses = makeStats(MAX_ITEMS);
     private final boolean[] negItems = new boolean[MAX_ITEMS];
-    private final boolean[] result = new boolean[MAX_ITEMS];
     private final int[] itemIdxs = new int[MAX_ITEMS];
     private final int[] pendingIdxs = new int[MAX_ITEMS];
     private final int[] modifyTotals = new int[5];
@@ -134,28 +135,33 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
         int worstDef = baseDef;
         int worstAgi = baseAgi;
 
+        long validMask = 0L;
+        long fullMask = count == 64 ? -1L : (1L << count) - 1;
+
+        // First sweep: classify items and collect the negative bonus sums.
+        // Only negative items need their stats copied here - everything else
+        // is either done (stat-less) or gets read again straight off the item
+        // in the greedy sweep, which stores stats only for items that fail.
         for (int i = 0; i < count; i++) {
             IEquipment item = equipment.get(i);
             int[] r = item.requirements();
             int[] b = item.bonuses();
             if ((b[0] | b[1] | b[2] | b[3] | b[4]) == 0 && (r[0] | r[1] | r[2] | r[3] | r[4]) == 0) {
                 // tomes and other stat-less items are always fine
-                result[i] = true;
+                validMask |= 1L << i;
                 negItems[i] = false;
                 continue;
             }
-            result[i] = false;
-            itemReqs[i].setFromClamped(r);
-            Stats bonus = itemBonuses[i];
-            bonus.setFrom(b);
-            boolean neg = bonus.str < 0 || bonus.dex < 0 || bonus.intel < 0 || bonus.def < 0 || bonus.agi < 0;
+            boolean neg = b[0] < 0 || b[1] < 0 || b[2] < 0 || b[3] < 0 || b[4] < 0;
             negItems[i] = neg;
             if (neg) {
-                worstStr += Math.min(bonus.str, 0);
-                worstDex += Math.min(bonus.dex, 0);
-                worstInt += Math.min(bonus.intel, 0);
-                worstDef += Math.min(bonus.def, 0);
-                worstAgi += Math.min(bonus.agi, 0);
+                itemReqs[i].setFromClamped(r);
+                itemBonuses[i].setFrom(b);
+                worstStr += Math.min(b[0], 0);
+                worstDex += Math.min(b[1], 0);
+                worstInt += Math.min(b[2], 0);
+                worstDef += Math.min(b[3], 0);
+                worstAgi += Math.min(b[4], 0);
             }
         }
 
@@ -171,22 +177,26 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
         int pending = 0;
         boolean added = false;
         for (int i = 0; i < count; i++) {
-            if (result[i] || negItems[i]) {
+            if ((validMask >>> i & 1L) != 0 || negItems[i]) {
                 continue;
             }
-            Stats r = itemReqs[i];
-            if (worstStr < r.str || worstDex < r.dex || worstInt < r.intel
-                || worstDef < r.def || worstAgi < r.agi) {
+            IEquipment item = equipment.get(i);
+            int[] r = item.requirements();
+            if ((r[0] > 0 && worstStr < r[0]) || (r[1] > 0 && worstDex < r[1])
+                || (r[2] > 0 && worstInt < r[2]) || (r[3] > 0 && worstDef < r[3])
+                || (r[4] > 0 && worstAgi < r[4])) {
+                itemReqs[i].setFromClamped(r);
+                itemBonuses[i].setFrom(item.bonuses());
                 pendingIdxs[pending++] = i;
                 continue;
             }
-            Stats b = itemBonuses[i];
-            worstStr += b.str;
-            worstDex += b.dex;
-            worstInt += b.intel;
-            worstDef += b.def;
-            worstAgi += b.agi;
-            result[i] = true;
+            int[] b = item.bonuses();
+            worstStr += b[0];
+            worstDex += b[1];
+            worstInt += b[2];
+            worstDef += b[3];
+            worstAgi += b[4];
+            validMask |= 1L << i;
             added = true;
         }
         while (added && pending > 0) {
@@ -204,7 +214,7 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
                 worstInt += b.intel;
                 worstDef += b.def;
                 worstAgi += b.agi;
-                result[i] = true;
+                validMask |= 1L << i;
                 pendingIdxs[k--] = pendingIdxs[--pending];
                 added = true;
             }
@@ -216,13 +226,13 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
         int curDef = worstDef - negDef;
         int curAgi = worstAgi - negAgi;
 
-        // Move the undecided leftovers to the front of the buffers so the
-        // search only ever looks at slots [0, m).
+        // Walk the undecided bits to the front of the buffers so the search
+        // only ever looks at slots [0, m). Every undecided item already has
+        // its stats stored - pending items got them on failure, negative
+        // items in the first sweep.
         int m = 0;
-        for (int i = 0; i < count; i++) {
-            if (result[i]) {
-                continue;
-            }
+        for (long rem = ~validMask & fullMask; rem != 0; rem &= rem - 1) {
+            int i = Long.numberOfTrailingZeros(rem);
             itemIdxs[m] = i;
             if (m != i) {
                 itemReqs[m].setFrom(itemReqs[i]);
@@ -240,7 +250,7 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
             int bestCombo = findBestCombo(m, curStr, curDex, curInt, curDef, curAgi);
             for (int slot = 0; slot < m; slot++) {
                 if ((bestCombo & (1 << slot)) != 0) {
-                    result[itemIdxs[slot]] = true;
+                    validMask |= 1L << itemIdxs[slot];
                     Stats b = itemBonuses[slot];
                     curStr += b.str;
                     curDex += b.dex;
@@ -251,12 +261,7 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
             }
         }
 
-        int validCount = 0;
-        for (int i = 0; i < count; i++) {
-            if (result[i]) {
-                validCount++;
-            }
-        }
+        int validCount = Long.bitCount(validMask);
         // cur* already equals base + every valid bonus, so the player update
         // is just the difference. No need to touch the items again.
         if (validCount > 0) {
@@ -267,7 +272,7 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
             modifyTotals[4] = curAgi - baseAgi;
             player.modify(modifyTotals, true);
         }
-        if (validCount == count) {
+        if (validMask == fullMask) {
             // Everything fits - the usual case on real builds. The player's
             // equipment list is exactly the valid list.
             return new Result(equipment, new ArrayList<>(0));
@@ -278,7 +283,7 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
         int inv = 0;
         for (int i = 0; i < count; i++) {
             IEquipment item = equipment.get(i);
-            if (result[i]) {
+            if ((validMask >>> i & 1L) != 0) {
                 validItems[v++] = item;
             } else {
                 invalidItems[inv++] = item;

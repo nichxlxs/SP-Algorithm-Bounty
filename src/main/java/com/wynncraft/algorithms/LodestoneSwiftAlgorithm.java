@@ -47,7 +47,6 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
     private final Stats[] itemReqs = makeStats(MAX_ITEMS);
     private final Stats[] itemBonuses = makeStats(MAX_ITEMS);
     private final boolean[] negItems = new boolean[MAX_ITEMS];
-    private final boolean[] result = new boolean[MAX_ITEMS];
     private final int[] itemIdxs = new int[MAX_ITEMS];
     private final int[] pendingIdxs = new int[MAX_ITEMS];
     private int[] comboStack = new int[1 << 16];
@@ -94,6 +93,9 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
         int worstDef = baseDef + negDef;
         int worstAgi = baseAgi + negAgi;
 
+        long validMask = 0L;
+        long fullMask = count == 64 ? -1L : (1L << count) - 1;
+
         boolean[] statless = player.statless;
         boolean[] negItem = player.negItem;
         int[] reqStr = player.reqStr;
@@ -110,10 +112,9 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
         for (int i = 0; i < count; i++) {
             if (statless[i]) {
                 // tomes and other stat-less items are always fine
-                result[i] = true;
+                validMask |= 1L << i;
                 continue;
             }
-            result[i] = false;
             if (negItem[i]) {
                 continue;
             }
@@ -127,7 +128,7 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
             worstInt += player.bonInt[i];
             worstDef += player.bonDef[i];
             worstAgi += player.bonAgi[i];
-            result[i] = true;
+            validMask |= 1L << i;
             added = true;
         }
         while (added && pending > 0) {
@@ -143,7 +144,7 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
                 worstInt += player.bonInt[i];
                 worstDef += player.bonDef[i];
                 worstAgi += player.bonAgi[i];
-                result[i] = true;
+                validMask |= 1L << i;
                 pendingIdxs[k--] = pendingIdxs[--pending];
                 added = true;
             }
@@ -155,13 +156,11 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
         int curDef = worstDef - negDef;
         int curAgi = worstAgi - negAgi;
 
-        // Copy the undecided leftovers into our own scratch buffers so the
-        // search never touches player-owned data.
+        // Walk the undecided bits into our own scratch buffers so the search
+        // never touches player-owned data.
         int m = 0;
-        for (int i = 0; i < count; i++) {
-            if (result[i]) {
-                continue;
-            }
+        for (long rem = ~validMask & fullMask; rem != 0; rem &= rem - 1) {
+            int i = Long.numberOfTrailingZeros(rem);
             itemIdxs[m] = i;
             Stats r = itemReqs[m];
             r.str = reqStr[i];
@@ -187,7 +186,7 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
             int bestCombo = findBestCombo(m, curStr, curDex, curInt, curDef, curAgi);
             for (int slot = 0; slot < m; slot++) {
                 if ((bestCombo & (1 << slot)) != 0) {
-                    result[itemIdxs[slot]] = true;
+                    validMask |= 1L << itemIdxs[slot];
                     Stats b = itemBonuses[slot];
                     curStr += b.str;
                     curDex += b.dex;
@@ -198,19 +197,14 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
             }
         }
 
-        int validCount = 0;
-        for (int i = 0; i < count; i++) {
-            if (result[i]) {
-                validCount++;
-            }
-        }
+        int validCount = Long.bitCount(validMask);
         // cur* already equals base + every valid bonus, so the player update
         // is just the difference. No need to touch the items again.
         if (validCount > 0) {
             player.addBonus(curStr - baseStr, curDex - baseDex, curInt - baseInt,
                 curDef - baseDef, curAgi - baseAgi);
         }
-        if (validCount == count) {
+        if (validMask == fullMask) {
             // Everything fits - the usual case on real builds. The player's
             // own equipment view is exactly the valid list.
             return new Result(player.equipment(), new ArrayList<>(0));
@@ -221,7 +215,7 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
         int v = 0;
         int inv = 0;
         for (int i = 0; i < count; i++) {
-            if (result[i]) {
+            if ((validMask >>> i & 1L) != 0) {
                 validItems[v++] = items[i];
             } else {
                 invalidItems[inv++] = items[i];

@@ -146,22 +146,12 @@ public class LodestonePlayer implements IPlayer {
                 int[] r = item.requirements();
                 int[] b = item.bonuses();
                 if ((b[0] | b[1] | b[2] | b[3] | b[4]) == 0 && (r[0] | r[1] | r[2] | r[3] | r[4]) == 0) {
+                    // Slot i is written at most once per builder and the
+                    // arrays start (and grow) zeroed, so the flag is enough.
                     statless[i] = true;
-                    negItem[i] = false;
-                    reqStr[i] = 0;
-                    reqDex[i] = 0;
-                    reqInt[i] = 0;
-                    reqDef[i] = 0;
-                    reqAgi[i] = 0;
-                    bonStr[i] = 0;
-                    bonDex[i] = 0;
-                    bonInt[i] = 0;
-                    bonDef[i] = 0;
-                    bonAgi[i] = 0;
                     equipment.add(item);
                     continue;
                 }
-                statless[i] = false;
                 reqStr[i] = r[0];
                 reqDex[i] = r[1];
                 reqInt[i] = r[2];

@@ -117,9 +117,8 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
             if (negItem[i]) {
                 continue;
             }
-            if ((reqStr[i] > 0 && worstStr < reqStr[i]) || (reqDex[i] > 0 && worstDex < reqDex[i])
-                || (reqInt[i] > 0 && worstInt < reqInt[i]) || (reqDef[i] > 0 && worstDef < reqDef[i])
-                || (reqAgi[i] > 0 && worstAgi < reqAgi[i])) {
+            if (worstStr < reqStr[i] || worstDex < reqDex[i] || worstInt < reqInt[i]
+                || worstDef < reqDef[i] || worstAgi < reqAgi[i]) {
                 pendingIdxs[pending++] = i;
                 continue;
             }
@@ -135,9 +134,8 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
             added = false;
             for (int k = 0; k < pending; k++) {
                 int i = pendingIdxs[k];
-                if ((reqStr[i] > 0 && worstStr < reqStr[i]) || (reqDex[i] > 0 && worstDex < reqDex[i])
-                    || (reqInt[i] > 0 && worstInt < reqInt[i]) || (reqDef[i] > 0 && worstDef < reqDef[i])
-                    || (reqAgi[i] > 0 && worstAgi < reqAgi[i])) {
+                if (worstStr < reqStr[i] || worstDex < reqDex[i] || worstInt < reqInt[i]
+                    || worstDef < reqDef[i] || worstAgi < reqAgi[i]) {
                     continue;
                 }
                 worstStr += player.bonStr[i];
@@ -309,9 +307,8 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
                 }
 
                 Stats r = itemReqs[slot];
-                if ((r.str > 0 && cStr < r.str) || (r.dex > 0 && cDex < r.dex)
-                    || (r.intel > 0 && cInt < r.intel) || (r.def > 0 && cDef < r.def)
-                    || (r.agi > 0 && cAgi < r.agi)) {
+                if (cStr < r.str || cDex < r.dex || cInt < r.intel
+                    || cDef < r.def || cAgi < r.agi) {
                     continue;
                 }
 
@@ -331,11 +328,9 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
                         int other = Integer.numberOfTrailingZeros(rem);
                         Stats or = itemReqs[other];
                         Stats ob = itemBonuses[other];
-                        if ((or.str > 0 && nStr - ob.str < or.str)
-                            || (or.dex > 0 && nDex - ob.dex < or.dex)
-                            || (or.intel > 0 && nInt - ob.intel < or.intel)
-                            || (or.def > 0 && nDef - ob.def < or.def)
-                            || (or.agi > 0 && nAgi - ob.agi < or.agi)) {
+                        if (nStr - ob.str < or.str || nDex - ob.dex < or.dex
+                            || nInt - ob.intel < or.intel || nDef - ob.def < or.def
+                            || nAgi - ob.agi < or.agi) {
                             ok = false;
                             break;
                         }

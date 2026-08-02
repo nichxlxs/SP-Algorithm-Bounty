@@ -199,11 +199,14 @@ public class LodestonePlayer implements IPlayer {
                     size = i + 1;
                     continue;
                 }
-                reqStr[i] = r[0];
-                reqDex[i] = r[1];
-                reqInt[i] = r[2];
-                reqDef[i] = r[3];
-                reqAgi[i] = r[4];
+                // A requirement that isn't positive means nothing (confirmed
+                // by the maintainer), so store a sentinel no stat can be
+                // below - the run-time checks then need no zero-guard.
+                reqStr[i] = r[0] > 0 ? r[0] : Integer.MIN_VALUE;
+                reqDex[i] = r[1] > 0 ? r[1] : Integer.MIN_VALUE;
+                reqInt[i] = r[2] > 0 ? r[2] : Integer.MIN_VALUE;
+                reqDef[i] = r[3] > 0 ? r[3] : Integer.MIN_VALUE;
+                reqAgi[i] = r[4] > 0 ? r[4] : Integer.MIN_VALUE;
                 bonStr[i] = b[0];
                 bonDex[i] = b[1];
                 bonInt[i] = b[2];

@@ -65,6 +65,17 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
             agi = arr[4];
         }
 
+        // A requirement that isn't positive means nothing (confirmed by the
+        // maintainer), so store a sentinel no stat can be below - the checks
+        // then need no zero-guard.
+        void setFromClamped(int[] arr) {
+            str = arr[0] > 0 ? arr[0] : Integer.MIN_VALUE;
+            dex = arr[1] > 0 ? arr[1] : Integer.MIN_VALUE;
+            intel = arr[2] > 0 ? arr[2] : Integer.MIN_VALUE;
+            def = arr[3] > 0 ? arr[3] : Integer.MIN_VALUE;
+            agi = arr[4] > 0 ? arr[4] : Integer.MIN_VALUE;
+        }
+
         void setFrom(Stats o) {
             str = o.str;
             dex = o.dex;
@@ -134,7 +145,7 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
                 continue;
             }
             result[i] = false;
-            itemReqs[i].setFrom(r);
+            itemReqs[i].setFromClamped(r);
             Stats bonus = itemBonuses[i];
             bonus.setFrom(b);
             boolean neg = bonus.str < 0 || bonus.dex < 0 || bonus.intel < 0 || bonus.def < 0 || bonus.agi < 0;
@@ -164,9 +175,8 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
                 continue;
             }
             Stats r = itemReqs[i];
-            if ((r.str > 0 && worstStr < r.str) || (r.dex > 0 && worstDex < r.dex)
-                || (r.intel > 0 && worstInt < r.intel) || (r.def > 0 && worstDef < r.def)
-                || (r.agi > 0 && worstAgi < r.agi)) {
+            if (worstStr < r.str || worstDex < r.dex || worstInt < r.intel
+                || worstDef < r.def || worstAgi < r.agi) {
                 pendingIdxs[pending++] = i;
                 continue;
             }
@@ -184,9 +194,8 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
             for (int k = 0; k < pending; k++) {
                 int i = pendingIdxs[k];
                 Stats r = itemReqs[i];
-                if ((r.str > 0 && worstStr < r.str) || (r.dex > 0 && worstDex < r.dex)
-                    || (r.intel > 0 && worstInt < r.intel) || (r.def > 0 && worstDef < r.def)
-                    || (r.agi > 0 && worstAgi < r.agi)) {
+                if (worstStr < r.str || worstDex < r.dex || worstInt < r.intel
+                    || worstDef < r.def || worstAgi < r.agi) {
                     continue;
                 }
                 Stats b = itemBonuses[i];
@@ -355,9 +364,8 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
                 }
 
                 Stats r = itemReqs[slot];
-                if ((r.str > 0 && cStr < r.str) || (r.dex > 0 && cDex < r.dex)
-                    || (r.intel > 0 && cInt < r.intel) || (r.def > 0 && cDef < r.def)
-                    || (r.agi > 0 && cAgi < r.agi)) {
+                if (cStr < r.str || cDex < r.dex || cInt < r.intel
+                    || cDef < r.def || cAgi < r.agi) {
                     continue;
                 }
 
@@ -377,11 +385,9 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
                         int other = Integer.numberOfTrailingZeros(rem);
                         Stats or = itemReqs[other];
                         Stats ob = itemBonuses[other];
-                        if ((or.str > 0 && nStr - ob.str < or.str)
-                            || (or.dex > 0 && nDex - ob.dex < or.dex)
-                            || (or.intel > 0 && nInt - ob.intel < or.intel)
-                            || (or.def > 0 && nDef - ob.def < or.def)
-                            || (or.agi > 0 && nAgi - ob.agi < or.agi)) {
+                        if (nStr - ob.str < or.str || nDex - ob.dex < or.dex
+                            || nInt - ob.intel < or.intel || nDef - ob.def < or.def
+                            || nAgi - ob.agi < or.agi) {
                             ok = false;
                             break;
                         }

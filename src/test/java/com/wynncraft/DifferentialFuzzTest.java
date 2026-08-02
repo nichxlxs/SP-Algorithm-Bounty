@@ -21,20 +21,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Differential fuzzing for the Closure Lattice algorithm. Runs in the default
- * suite (fixed seeds, deterministic, a few seconds); isolate it with:
- * ./gradlew test -Pcases=fuzz
+ * Differential fuzzing for the Lodestone algorithm (and its fallback solver).
+ * Runs in the default suite (fixed seeds, deterministic, a few seconds);
+ * isolate it with: ./gradlew test -Pcases=fuzz
  *
- * Three layers of evidence:
- * 1. A permutation oracle implementing the spec literally (search over equip
- *    orders, full invariant re-scan after every add, no memoization at all),
- *    cross-checked against a mask-memoized oracle to validate empirically
- *    that feasibility is set-determined.
- * 2. The mask-memoized oracle (still no classification / closure / greedy -
- *    none of the optimizations under test) against the algorithm on tens of
- *    thousands of random small instances.
- * 3. Agreement with three independent exact submissions (CascadeBound,
- *    Starving Goblin, Subtractive BnB) on larger instances.
+ * Layers of evidence:
+ * 1. A permutation oracle that implements the spec literally (search over
+ *    equip orders, full invariant re-scan after every add, no memoization),
+ *    cross-checked against a mask-memoized oracle to confirm feasibility
+ *    only depends on the item set, not the order.
+ * 2. That oracle against the algorithm on tens of thousands of random small
+ *    instances, with the fallback solver checked for agreement on each one.
+ * 3. Agreement with independent exact submissions (CascadeBound, Starving
+ *    Goblin) on larger instances, plus adversarial robustness shapes.
  */
 @Tag("fuzz")
 class DifferentialFuzzTest {
@@ -215,7 +214,7 @@ class DifferentialFuzzTest {
 
     // -------------------------------------------------------------- execution
 
-    private static final String[] LATTICE_NAMES = {"Closure Lattice V1", "Closure Lattice V2", "Closure Lattice V3", "Closure Lattice V4", "Closure Lattice V5"};
+    private static final String[] LATTICE_NAMES = {"Lodestone V1"};
 
     private static AlgorithmRegistry.Entry entry(String name) {
         return AlgorithmRegistry.registry().stream()
@@ -233,13 +232,12 @@ class DifferentialFuzzTest {
     private static int[] runAlgorithm(AlgorithmRegistry.Entry entry, Instance inst, boolean validateShape) {
         int[] result = runAlgorithmOnce(entry, inst, validateShape);
         if (entry.name().equals(LATTICE_NAMES[0])) {
-            for (int v = 1; v < LATTICE_NAMES.length; v++) {
-                int[] other = runAlgorithmOnce(entry(LATTICE_NAMES[v]), inst, validateShape);
-                if (result[0] != other[0] || result[1] != other[1]) {
-                    fail(LATTICE_NAMES[v] + " diverges from V1: v1 count=" + result[0]
-                        + " weight=" + result[1] + " other count=" + other[0]
-                        + " weight=" + other[1] + "\n" + describe(inst));
-                }
+            // The fallback engine must agree with the fast path everywhere.
+            int[] other = runFallback(inst);
+            if (result[0] != other[0] || result[1] != other[1]) {
+                fail("Fallback diverges: main count=" + result[0]
+                    + " weight=" + result[1] + " fallback count=" + other[0]
+                    + " weight=" + other[1] + "\n" + describe(inst));
             }
         }
         return result;
@@ -293,6 +291,27 @@ class DifferentialFuzzTest {
         return new int[] {count, weight};
     }
 
+
+    private static final com.wynncraft.algorithms.LodestoneFallback FALLBACK =
+        new com.wynncraft.algorithms.LodestoneFallback();
+
+    private static int[] runFallback(Instance inst) {
+        IPlayerBuilder<?> builder = new com.wynncraft.core.WynnPlayer.Builder();
+        builder.equipment(inst.items);
+        for (int s = 0; s < S; s++) {
+            builder.allocate(SKILLS[s], inst.base[s]);
+        }
+        IPlayer player = builder.build();
+        IAlgorithm.Result result = FALLBACK.run((com.wynncraft.core.WynnPlayer) player);
+        int weight = 0;
+        for (IEquipment item : result.valid()) {
+            for (int b : item.bonuses()) {
+                weight += b;
+            }
+        }
+        return new int[] {result.valid().size(), weight};
+    }
+
     private static String describe(Instance inst) {
         StringBuilder sb = new StringBuilder("base=").append(java.util.Arrays.toString(inst.base));
         for (int i = 0; i < inst.items.length; i++) {
@@ -323,7 +342,7 @@ class DifferentialFuzzTest {
 
     @Test
     void closureLatticeMatchesOracleOnSmallInstances() {
-        AlgorithmRegistry.Entry lattice = entry("Closure Lattice V1");
+        AlgorithmRegistry.Entry lattice = entry("Lodestone V1");
         Random rnd = new Random(0x5EED_0002L);
         for (int iter = 0; iter < 25000; iter++) {
             int n = 1 + rnd.nextInt(7);
@@ -341,7 +360,7 @@ class DifferentialFuzzTest {
 
     @Test
     void closureLatticeMatchesOracleOnMediumInstances() {
-        AlgorithmRegistry.Entry lattice = entry("Closure Lattice V1");
+        AlgorithmRegistry.Entry lattice = entry("Lodestone V1");
         Random rnd = new Random(0x5EED_0003L);
         for (int iter = 0; iter < 1500; iter++) {
             int n = 8 + rnd.nextInt(3);
@@ -364,7 +383,7 @@ class DifferentialFuzzTest {
         // {req [4,0,0,0,5], bon [0,4,4,0,-6]} + 2x {req [7,0,0,3,6], bon [8,-5,0,0,8]}
         // - all three are equippable in the order B,B,A but it reports only 2).
         // The mask oracle is the arbiter here instead.
-        AlgorithmRegistry.Entry lattice = entry("Closure Lattice V1");
+        AlgorithmRegistry.Entry lattice = entry("Lodestone V1");
         List<AlgorithmRegistry.Entry> rivals = new ArrayList<>();
         rivals.add(entry("CascadeBound V1"));
         rivals.add(entry("Starving Goblin V2"));
@@ -399,7 +418,7 @@ class DifferentialFuzzTest {
         // canonicalization, and the node budget. The returned set must always be
         // feasible and, for these shapes, exactly optimal: every drain is
         // equippable (count = n - 1) and the blocked item is not.
-        AlgorithmRegistry.Entry lattice = entry("Closure Lattice V1");
+        AlgorithmRegistry.Entry lattice = entry("Lodestone V1");
         int[][] sizes = {{24}, {64}, {65}, {80}};
         for (int[] sz : sizes) {
             int drains = sz[0];
@@ -439,7 +458,7 @@ class DifferentialFuzzTest {
     @Test
     void scratchBuffersSurviveShrinkingAndGrowingInputs() {
         // One shared instance across wildly varying n exercises stale-state bugs.
-        AlgorithmRegistry.Entry lattice = entry("Closure Lattice V1");
+        AlgorithmRegistry.Entry lattice = entry("Lodestone V1");
         Random rnd = new Random(0x5EED_0005L);
         int[] sizes = {13, 1, 9, 2, 12, 3, 11, 1, 10, 4};
         for (int round = 0; round < 300; round++) {

@@ -3,7 +3,6 @@ package com.wynncraft.algorithms;
 import com.wynncraft.core.WynnPlayer;
 import com.wynncraft.core.interfaces.IAlgorithm;
 import com.wynncraft.core.interfaces.IEquipment;
-import com.wynncraft.core.interfaces.Information;
 import com.wynncraft.enums.SkillPoint;
 
 import java.util.ArrayList;
@@ -12,57 +11,16 @@ import java.util.HashSet;
 import java.util.List;
 
 /**
- * Exact solver built on two structural facts of the problem:
+ * Uncapped fallback solver behind {@link LodestoneAlgorithm}. Slower per
+ * call, but it has no fixed limits: exact up to 62 "risky" items (closure
+ * over the safe ones, bounded depth-first search over the rest) and a
+ * greedy answer with leave-one-out repair beyond that, so absurdly large or
+ * hostile inputs still return a sane result instead of crashing.
  *
- * 1. The stat state after equipping a set of items is order-independent
- *    (base + sum of bonuses), so feasibility is a property of the subset
- *    lattice, not of permutations. The search space is masks, never orders.
- *
- * 2. Items with no negative bonus whose requirements only touch skills that
- *    no item in the input reduces ("forced" items) can be equipped greedily
- *    whenever their requirements are met, without ever costing optimality:
- *    their bonuses can only help others, the skills they depend on are
- *    monotonically non-decreasing over any equip sequence, and once equipped
- *    they can never be invalidated. Only the remaining "branch" items
- *    (negative bonuses, or requirements on a reducible skill) need search.
- *
- * Pipeline per call (no state is carried between calls; scratch arrays are
- * reused for memory only and every read cell is rewritten each run):
- *
- *   A. One cheap pass: cache requirement/bonus array references and collect
- *      the reducible-skill mask from items with negative bonuses (a
- *      precomputed flag on the equipment object).
- *   B. If no item has a negative bonus, the whole input is a monotone
- *      closure: equip anything equippable until a fixpoint - provably exact,
- *      no classification, no search. This is the common in-game shape.
- *   C. Otherwise classify into forced / branch, then run a greedy
- *      constructive attempt (forced closure interleaved with
- *      invariant-checked branch adds). If it equips everything, that is
- *      provably optimal and we stop.
- *   D. Exact DFS over branch-item masks with a visited set. Each node
- *      applies the forced closure fixpoint; transitions check the insertion
- *      rule (stats meet requirements) and the cascade invariant (stats stay
- *      at or above req+bonus of every equipped branch item). Best
- *      (count, weight) over all reachable masks is exact.
- *
- * The branch set is not artificially capped: masks are longs, the visited
- * set switches from a bitset to a hash set past 2^20 masks. Stat-identical
- * items are explored in canonical order (duplicates collapse to one subtree
- * per multiplicity), a permanently-blocked-item bound prunes hopeless
- * subtrees, and a node budget caps worst-case latency and memory on
- * adversarial inputs - if the budget is ever exhausted (requires tens of
- * pathological interacting negative items, far outside game data), the best
- * feasible set found so far is returned. Above 62 branch items, where exact
- * subset search is information-theoretically out of reach for any solver,
- * the result is the greedy constructive answer improved by leave-one-out
- * repair (re-running the greedy with each equipped negative item excluded).
- *
- * Supported numeric domain: per-lane requirements/bonuses and allocated SP
- * with magnitudes up to ~2^20 and item counts up to ~2^10. Real game data
- * stays below ~200; outside the stated domain int arithmetic could wrap.
+ * Kept as plain readable scalar code on purpose - it only runs when the
+ * fast path bails out, which real game data never triggers.
  */
-@Information(name = "Closure Lattice", version = 1, authors = {"claude"})
-public class ClosureLatticeAlgorithm implements IAlgorithm<WynnPlayer> {
+public class LodestoneFallback implements IAlgorithm<WynnPlayer> {
 
     private static final SkillPoint[] SKILL_POINTS = SkillPoint.values();
     private static final int S = 5;

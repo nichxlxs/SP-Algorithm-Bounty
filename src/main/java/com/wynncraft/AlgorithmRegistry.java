@@ -1,13 +1,9 @@
 package com.wynncraft;
 
 
+import com.wynncraft.algorithms.LodestoneAlgorithm;
 import com.wynncraft.algorithms.NegativeOrderAlgorithm;
 import com.wynncraft.algorithms.CapyTopoAlgorithm;
-import com.wynncraft.algorithms.ClosureLatticeAlgorithm;
-import com.wynncraft.algorithms.ClosureLatticeV2Algorithm;
-import com.wynncraft.algorithms.ClosureLatticeV3Algorithm;
-import com.wynncraft.algorithms.ClosureLatticeV4Algorithm;
-import com.wynncraft.algorithms.ClosureLatticeV5Algorithm;
 import com.wynncraft.algorithms.CascadeBoundChecker;
 import com.wynncraft.algorithms.GreedyAlgorithm;
 import com.wynncraft.algorithms.MyFirstAlgorithm;
@@ -61,11 +57,7 @@ public class AlgorithmRegistry {
         register(new PrunedMaskAlgorithm(), WynnPlayer.Builder::new);
         register(new PrunedMaskV2Algorithm(), WynnPlayer.Builder::new);
         register(new StarvingGoblinAlgorithm(), StarvingPlayer.Builder::new);
-        register(new ClosureLatticeAlgorithm(), WynnPlayer.Builder::new);
-        register(new ClosureLatticeV2Algorithm(), WynnPlayer.Builder::new);
-        register(new ClosureLatticeV3Algorithm(), WynnPlayer.Builder::new);
-        register(new ClosureLatticeV4Algorithm(), WynnPlayer.Builder::new);
-        register(new ClosureLatticeV5Algorithm(), WynnPlayer.Builder::new);
+        register(new LodestoneAlgorithm(), WynnPlayer.Builder::new);
     }
 
     /**

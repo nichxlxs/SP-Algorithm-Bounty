@@ -239,6 +239,13 @@ class DifferentialFuzzTest {
                     + " weight=" + result[1] + " fallback count=" + other[0]
                     + " weight=" + other[1] + "\n" + describe(inst));
             }
+            // So must the Swift variant (same engine on the custom player).
+            int[] swift = runAlgorithmOnce(entry("Lodestone Swift V1"), inst, validateShape);
+            if (result[0] != swift[0] || result[1] != swift[1]) {
+                fail("Swift diverges: main count=" + result[0]
+                    + " weight=" + result[1] + " swift count=" + swift[0]
+                    + " weight=" + swift[1] + "\n" + describe(inst));
+            }
         }
         return result;
     }
@@ -302,7 +309,7 @@ class DifferentialFuzzTest {
             builder.allocate(SKILLS[s], inst.base[s]);
         }
         IPlayer player = builder.build();
-        IAlgorithm.Result result = FALLBACK.run((com.wynncraft.core.WynnPlayer) player);
+        IAlgorithm.Result result = FALLBACK.run(player);
         int weight = 0;
         for (IEquipment item : result.valid()) {
             for (int b : item.bonuses()) {

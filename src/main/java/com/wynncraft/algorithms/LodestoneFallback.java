@@ -1,8 +1,8 @@
 package com.wynncraft.algorithms;
 
-import com.wynncraft.core.WynnPlayer;
 import com.wynncraft.core.interfaces.IAlgorithm;
 import com.wynncraft.core.interfaces.IEquipment;
+import com.wynncraft.core.interfaces.IPlayer;
 import com.wynncraft.enums.SkillPoint;
 
 import java.util.ArrayList;
@@ -20,7 +20,7 @@ import java.util.List;
  * Kept as plain readable scalar code on purpose - it only runs when the
  * fast path bails out, which real game data never triggers.
  */
-public class LodestoneFallback implements IAlgorithm<WynnPlayer> {
+public class LodestoneFallback implements IAlgorithm<IPlayer> {
 
     private static final SkillPoint[] SKILL_POINTS = SkillPoint.values();
     private static final int S = 5;
@@ -83,7 +83,7 @@ public class LodestoneFallback implements IAlgorithm<WynnPlayer> {
     private int bannedItem;
 
     @Override
-    public Result run(WynnPlayer player) {
+    public Result run(IPlayer player) {
         List<IEquipment> equipment = player.equipment();
         int count = equipment.size();
         List<IEquipment> validList = new ArrayList<>(count);

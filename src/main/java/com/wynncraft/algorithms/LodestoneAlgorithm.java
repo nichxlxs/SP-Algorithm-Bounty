@@ -81,6 +81,7 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
     private final boolean[] negItems = new boolean[MAX_ITEMS];
     private final boolean[] result = new boolean[MAX_ITEMS];
     private final int[] itemIdxs = new int[MAX_ITEMS];
+    private final int[] pendingIdxs = new int[MAX_ITEMS];
     private final int[] modifyTotals = new int[5];
     private int[] comboStack = new int[1 << 16];
     private HashSet<Integer> seenLarge;
@@ -151,14 +152,39 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
         }
 
         // Step 2: keep equipping items that are safe under the worst case,
-        // until a full pass adds nothing.
-        boolean added = true;
-        while (added) {
+        // until a full pass adds nothing. First pass over everything; repeat
+        // passes only look at what's still pending.
+        int pending = 0;
+        boolean added = false;
+        for (int i = 0; i < count; i++) {
+            if (result[i] || negItems[i]) {
+                continue;
+            }
+            Stats r = itemReqs[i];
+            if ((r.str > 0 && worstStr < r.str) || (r.dex > 0 && worstDex < r.dex)
+                || (r.intel > 0 && worstInt < r.intel) || (r.def > 0 && worstDef < r.def)
+                || (r.agi > 0 && worstAgi < r.agi)) {
+                pendingIdxs[pending++] = i;
+                continue;
+            }
+            Stats b = itemBonuses[i];
+            curStr += b.str;
+            curDex += b.dex;
+            curInt += b.intel;
+            curDef += b.def;
+            curAgi += b.agi;
+            worstStr += b.str;
+            worstDex += b.dex;
+            worstInt += b.intel;
+            worstDef += b.def;
+            worstAgi += b.agi;
+            result[i] = true;
+            added = true;
+        }
+        while (added && pending > 0) {
             added = false;
-            for (int i = 0; i < count; i++) {
-                if (result[i] || negItems[i]) {
-                    continue;
-                }
+            for (int k = 0; k < pending; k++) {
+                int i = pendingIdxs[k];
                 Stats r = itemReqs[i];
                 if ((r.str > 0 && worstStr < r.str) || (r.dex > 0 && worstDex < r.dex)
                     || (r.intel > 0 && worstInt < r.intel) || (r.def > 0 && worstDef < r.def)
@@ -177,6 +203,7 @@ public class LodestoneAlgorithm implements IAlgorithm<WynnPlayer> {
                 worstDef += b.def;
                 worstAgi += b.agi;
                 result[i] = true;
+                pendingIdxs[k--] = pendingIdxs[--pending];
                 added = true;
             }
         }

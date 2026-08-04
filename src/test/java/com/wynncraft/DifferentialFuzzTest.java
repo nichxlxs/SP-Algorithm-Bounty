@@ -214,7 +214,7 @@ class DifferentialFuzzTest {
 
     // -------------------------------------------------------------- execution
 
-    private static final String[] LATTICE_NAMES = {"Lodestone V1"};
+    private static final String[] PRIMARY_NAMES = {"Lodestone V1"};
 
     private static AlgorithmRegistry.Entry entry(String name) {
         return AlgorithmRegistry.registry().stream()
@@ -225,13 +225,13 @@ class DifferentialFuzzTest {
 
     /**
      * Runs an algorithm on the instance; returns {count, weight} and validates
-     * the result shape. When the entry is Closure Lattice V1, the SWAR V2 is
-     * run on the same instance as well and must produce an identical
-     * (count, weight) - so every oracle check transitively covers both.
+     * the result shape. When the entry is Lodestone V1, the fallback solver
+     * and the Swift variant are run on the same instance too and must produce
+     * an identical (count, weight) - so every oracle check covers all three.
      */
     private static int[] runAlgorithm(AlgorithmRegistry.Entry entry, Instance inst, boolean validateShape) {
         int[] result = runAlgorithmOnce(entry, inst, validateShape);
-        if (entry.name().equals(LATTICE_NAMES[0])) {
+        if (entry.name().equals(PRIMARY_NAMES[0])) {
             // The fallback engine must agree with the fast path everywhere.
             int[] other = runFallback(inst);
             if (result[0] != other[0] || result[1] != other[1]) {
@@ -348,7 +348,7 @@ class DifferentialFuzzTest {
     }
 
     @Test
-    void closureLatticeMatchesOracleOnSmallInstances() {
+    void lodestoneMatchesOracleOnSmallInstances() {
         AlgorithmRegistry.Entry lattice = entry("Lodestone V1");
         Random rnd = new Random(0x5EED_0002L);
         for (int iter = 0; iter < 25000; iter++) {
@@ -366,7 +366,7 @@ class DifferentialFuzzTest {
     }
 
     @Test
-    void closureLatticeMatchesOracleOnMediumInstances() {
+    void lodestoneMatchesOracleOnMediumInstances() {
         AlgorithmRegistry.Entry lattice = entry("Lodestone V1");
         Random rnd = new Random(0x5EED_0003L);
         for (int iter = 0; iter < 1500; iter++) {
@@ -384,7 +384,7 @@ class DifferentialFuzzTest {
     }
 
     @Test
-    void closureLatticeAgreesWithOracleAndExactRivalsOnLargerInstances() {
+    void lodestoneAgreesWithOracleAndExactRivalsOnLargerInstances() {
         // Subtractive BnB V1 is deliberately not in the reference set: this fuzzer
         // found it under-counting (e.g. base={13,9,0,10,9}, items
         // {req [4,0,0,0,5], bon [0,4,4,0,-6]} + 2x {req [7,0,0,3,6], bon [8,-5,0,0,8]}

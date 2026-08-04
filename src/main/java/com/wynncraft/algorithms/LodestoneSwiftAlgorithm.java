@@ -158,33 +158,33 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
 
         // Walk the undecided bits into our own scratch buffers so the search
         // never touches player-owned data.
-        int m = 0;
+        int undecided = 0;
         for (long rem = ~validMask & fullMask; rem != 0; rem &= rem - 1) {
             int i = Long.numberOfTrailingZeros(rem);
-            itemIdxs[m] = i;
-            Stats r = itemReqs[m];
+            itemIdxs[undecided] = i;
+            Stats r = itemReqs[undecided];
             r.str = reqStr[i];
             r.dex = reqDex[i];
             r.intel = reqInt[i];
             r.def = reqDef[i];
             r.agi = reqAgi[i];
-            Stats b = itemBonuses[m];
+            Stats b = itemBonuses[undecided];
             b.str = player.bonStr[i];
             b.dex = player.bonDex[i];
             b.intel = player.bonInt[i];
             b.def = player.bonDef[i];
             b.agi = player.bonAgi[i];
-            negItems[m] = negItem[i];
-            m++;
+            negItems[undecided] = negItem[i];
+            undecided++;
         }
 
-        if (m > MAX_UNDETERMINED) {
+        if (undecided > MAX_UNDETERMINED) {
             return fallback.run(player);
         }
 
-        if (m > 0) {
-            int bestCombo = findBestCombo(m, curStr, curDex, curInt, curDef, curAgi);
-            for (int slot = 0; slot < m; slot++) {
+        if (undecided > 0) {
+            int bestCombo = findBestCombo(undecided, curStr, curDex, curInt, curDef, curAgi);
+            for (int slot = 0; slot < undecided; slot++) {
                 if ((bestCombo & (1 << slot)) != 0) {
                     validMask |= 1L << itemIdxs[slot];
                     Stats b = itemBonuses[slot];
@@ -230,19 +230,19 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
      * best by count then by stat total, with the cascade re-check whenever a
      * negative item joins the combo.
      */
-    private int findBestCombo(int m, int baseStr, int baseDex, int baseInt, int baseDef, int baseAgi) {
-        int full = (1 << m) - 1;
+    private int findBestCombo(int slots, int baseStr, int baseDex, int baseInt, int baseDef, int baseAgi) {
+        int full = (1 << slots) - 1;
         boolean[] seen;
-        if (m <= SMALL_TABLE_LIMIT) {
-            seen = new boolean[1 << m];
+        if (slots <= SMALL_TABLE_LIMIT) {
+            seen = new boolean[1 << slots];
             seenLarge = null;
         } else {
             seen = null;
             seenLarge = new HashSet<>();
         }
         // Each combo is pushed at most once, and the node cap limits pushes
-        // too, so this never needs the full 2^m in pathological cases.
-        int stackNeeded = (int) Math.min((long) (1 << m), (long) MAX_NODES * m + m + 1L);
+        // too, so this never needs the full 2^slots in pathological cases.
+        int stackNeeded = (int) Math.min((long) (1 << slots), (long) MAX_NODES * slots + slots + 1L);
         if (comboStack.length < stackNeeded) {
             comboStack = new int[stackNeeded];
         }
@@ -285,7 +285,7 @@ public class LodestoneSwiftAlgorithm implements IAlgorithm<LodestonePlayer> {
             }
 
             // Try adding each missing item.
-            for (int slot = 0; slot < m; slot++) {
+            for (int slot = 0; slot < slots; slot++) {
                 int bit = 1 << slot;
                 if ((combo & bit) != 0) {
                     continue;

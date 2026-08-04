@@ -1,6 +1,9 @@
 package com.wynncraft;
 
 
+import com.wynncraft.algorithms.LodestoneAlgorithm;
+import com.wynncraft.algorithms.LodestonePlayer;
+import com.wynncraft.algorithms.LodestoneSwiftAlgorithm;
 import com.wynncraft.algorithms.NegativeOrderAlgorithm;
 import com.wynncraft.algorithms.CapyTopoAlgorithm;
 import com.wynncraft.algorithms.CascadeBoundChecker;
@@ -15,8 +18,6 @@ import com.wynncraft.algorithms.TheCuteCatAlgo;
 import com.wynncraft.algorithms.TheFourthAlgorithm;
 import com.wynncraft.algorithms.TheThirdAlgorithm;
 import com.wynncraft.algorithms.SubtractiveBnBAlgorithm;
-import com.wynncraft.algorithms.PrunedMaskAlgorithm;
-import com.wynncraft.algorithms.PrunedMaskV2Algorithm;
 import com.wynncraft.algorithms.StarvingGoblinAlgorithm;
 import com.wynncraft.algorithms.StarvingPlayer;
 import com.wynncraft.algorithms.WynnFrumaAlgorithm;
@@ -56,6 +57,8 @@ public class AlgorithmRegistry {
         register(new PrunedMaskAlgorithm(), WynnPlayer.Builder::new);
         register(new PrunedMaskV2Algorithm(), WynnPlayer.Builder::new);
         register(new StarvingGoblinAlgorithm(), StarvingPlayer.Builder::new);
+        register(new LodestoneAlgorithm(), WynnPlayer.Builder::new);
+        register(new LodestoneSwiftAlgorithm(), LodestonePlayer.Builder::new);
     }
 
     /**
